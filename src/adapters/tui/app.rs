@@ -885,13 +885,39 @@ impl App {
             return;
         };
 
+        // Calculate dynamic title height based on text wrapping
+        let available_width = popup_area.width.saturating_sub(4) as usize; // Account for margins and borders
+        let title_height = if available_width > 0 {
+            // Simple word-aware wrapping calculation
+            let words: Vec<&str> = task.name.split_whitespace().collect();
+            let mut lines = 1u16;
+            let mut current_line_len = 0;
+
+            for word in words {
+                let word_len = word.chars().count();
+                if current_line_len + word_len + 1 > available_width && current_line_len > 0 {
+                    lines += 1;
+                    current_line_len = word_len;
+                } else {
+                    current_line_len += if current_line_len > 0 {
+                        word_len + 1
+                    } else {
+                        word_len
+                    };
+                }
+            }
+            lines.min(3) // Cap at 3 lines max
+        } else {
+            1
+        };
+
         // Split the modal into sections
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Task title (fixed height)
-                Constraint::Min(10),   // All scrollable content (gets most space)
-                Constraint::Length(1), // Instructions
+                Constraint::Length(title_height), // Task title (dynamic height)
+                Constraint::Min(10),              // All scrollable content (gets most space)
+                Constraint::Length(1),            // Instructions
             ])
             .margin(1)
             .split(popup_area);
