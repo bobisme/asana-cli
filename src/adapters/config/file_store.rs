@@ -1,9 +1,9 @@
+use crate::domain::WorkspaceId;
+use crate::ports::{AppConfig, ConfigError, ConfigResult, ConfigStore};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
-use crate::domain::WorkspaceId;
-use crate::ports::{ConfigStore, AppConfig, ConfigError, ConfigResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 struct ConfigFile {
@@ -19,12 +19,13 @@ pub struct FileConfigStore {
 
 impl FileConfigStore {
     pub fn new() -> ConfigResult<Self> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| ConfigError::ReadError("Cannot determine config directory".to_string()))?;
-        
+        let config_dir = dirs::config_dir().ok_or_else(|| {
+            ConfigError::ReadError("Cannot determine config directory".to_string())
+        })?;
+
         let app_config_dir = config_dir.join("asana-cli");
         let config_path = app_config_dir.join("config.json");
-        
+
         Ok(Self {
             config_path,
             keyring_service: "asana-cli".to_string(),
@@ -58,7 +59,7 @@ impl FileConfigStore {
         fs::write(&token_path, token)
             .await
             .map_err(|e| ConfigError::WriteError(e.to_string()))?;
-        
+
         // Set restrictive permissions (Unix only)
         #[cfg(unix)]
         {
@@ -72,7 +73,7 @@ impl FileConfigStore {
                 .await
                 .map_err(|e| ConfigError::WriteError(e.to_string()))?;
         }
-        
+
         Ok(())
     }
 }
@@ -97,7 +98,7 @@ impl ConfigStore for FileConfigStore {
 
         // Always try to get the latest API token (from keyring, file, or env)
         let mut api_token = self.get_api_token().await?;
-        
+
         // If no token from storage, check environment variable as final fallback
         if api_token.is_none() {
             if let Ok(env_token) = std::env::var("ASANA_TOKEN") {

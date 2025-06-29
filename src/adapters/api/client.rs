@@ -1,8 +1,8 @@
+use super::dto::{AsanaListResponse, AsanaResponse};
+use crate::ports::{RepositoryError, RepositoryResult};
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
-use crate::ports::{RepositoryError, RepositoryResult};
-use super::dto::{AsanaResponse, AsanaListResponse};
 
 const ASANA_API_BASE: &str = "https://app.asana.com/api/1.0";
 
@@ -24,7 +24,7 @@ impl AsanaClient {
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> RepositoryResult<T> {
         let url = format!("{ASANA_API_BASE}{path}");
-        
+
         let response = self
             .client
             .get(&url)
@@ -38,7 +38,7 @@ impl AsanaClient {
 
     pub async fn get_list<T: DeserializeOwned>(&self, path: &str) -> RepositoryResult<Vec<T>> {
         let url = format!("{ASANA_API_BASE}{path}");
-        
+
         let response = self
             .client
             .get(&url)
@@ -51,11 +51,15 @@ impl AsanaClient {
             .text()
             .await
             .map_err(|e| RepositoryError::Network(e.to_string()))?;
-        
+
         tracing::debug!("API List Response: {}", response_text);
-        
-        let list_response: AsanaListResponse<T> = serde_json::from_str(&response_text)
-            .map_err(|e| RepositoryError::Serialization(format!("Failed to parse list response: {e}. Response was: {response_text}")))?;
+
+        let list_response: AsanaListResponse<T> =
+            serde_json::from_str(&response_text).map_err(|e| {
+                RepositoryError::Serialization(format!(
+                    "Failed to parse list response: {e}. Response was: {response_text}"
+                ))
+            })?;
         Ok(list_response.data)
     }
 
@@ -65,7 +69,7 @@ impl AsanaClient {
         body: &R,
     ) -> RepositoryResult<T> {
         let url = format!("{ASANA_API_BASE}{path}");
-        
+
         let response = self
             .client
             .put(&url)
@@ -84,7 +88,7 @@ impl AsanaClient {
         body: &R,
     ) -> RepositoryResult<T> {
         let url = format!("{ASANA_API_BASE}{path}");
-        
+
         let response = self
             .client
             .post(&url)
@@ -97,28 +101,33 @@ impl AsanaClient {
         self.handle_response(response).await
     }
 
-    async fn handle_response<T: DeserializeOwned>(&self, response: Response) -> RepositoryResult<T> {
+    async fn handle_response<T: DeserializeOwned>(
+        &self,
+        response: Response,
+    ) -> RepositoryResult<T> {
         let status = response.status();
-        
+
         match status.as_u16() {
             200..=299 => {
                 let response_text = response
                     .text()
                     .await
                     .map_err(|e| RepositoryError::Network(e.to_string()))?;
-                
+
                 tracing::debug!("API Response: {}", response_text);
-                
+
                 let asana_response: AsanaResponse<T> = serde_json::from_str(&response_text)
-                    .map_err(|e| RepositoryError::Serialization(format!("Failed to parse response: {e}. Response was: {response_text}")))?;
+                    .map_err(|e| {
+                        RepositoryError::Serialization(format!(
+                            "Failed to parse response: {e}. Response was: {response_text}"
+                        ))
+                    })?;
                 Ok(asana_response.data)
             }
             401 => Err(RepositoryError::Authentication(
-                "Invalid API token".to_string()
+                "Invalid API token".to_string(),
             )),
-            404 => Err(RepositoryError::NotFound(
-                "Resource not found".to_string()
-            )),
+            404 => Err(RepositoryError::NotFound("Resource not found".to_string())),
             429 => {
                 // Extract retry-after header if available
                 let retry_after = response
@@ -134,9 +143,7 @@ impl AsanaClient {
                     .text()
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
-                Err(RepositoryError::Api(format!(
-                    "HTTP {status}: {error_text}"
-                )))
+                Err(RepositoryError::Api(format!("HTTP {status}: {error_text}")))
             }
         }
     }

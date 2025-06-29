@@ -22,7 +22,6 @@ impl SearchBar {
         self.is_focused = focused;
     }
 
-
     pub fn query(&self) -> &str {
         &self.query
     }
@@ -82,9 +81,7 @@ impl SearchBar {
             Style::default()
         };
 
-        let paragraph = Paragraph::new(search_text)
-            .block(block)
-            .style(text_style);
+        let paragraph = Paragraph::new(search_text).block(block).style(text_style);
 
         frame.render_widget(paragraph, area);
 
@@ -92,9 +89,12 @@ impl SearchBar {
         if self.is_focused && !self.query.is_empty() {
             let cursor_x = area.x + 1 + self.cursor_position as u16;
             let cursor_y = area.y + 1;
-            
+
             if cursor_x < area.x + area.width - 1 {
-                frame.set_cursor_position(ratatui::layout::Position { x: cursor_x, y: cursor_y });
+                frame.set_cursor_position(ratatui::layout::Position {
+                    x: cursor_x,
+                    y: cursor_y,
+                });
             }
         }
     }

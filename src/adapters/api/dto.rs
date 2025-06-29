@@ -1,6 +1,6 @@
+use crate::domain::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use crate::domain::*;
 
 // Asana API response wrapper
 #[derive(Debug, Deserialize)]
@@ -136,7 +136,11 @@ impl From<TaskDto> for Task {
             modified_at: DateTime::parse_from_rfc3339(&dto.modified_at)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
-            workspace: WorkspaceId(dto.workspace.map(|w| w.gid).unwrap_or_else(|| "unknown".to_string())),
+            workspace: WorkspaceId(
+                dto.workspace
+                    .map(|w| w.gid)
+                    .unwrap_or_else(|| "unknown".to_string()),
+            ),
         }
     }
 }
@@ -160,14 +164,17 @@ impl From<ProjectDto> for Project {
             description: dto.notes,
             color: dto.color,
             archived: dto.archived.unwrap_or(false),
-            workspace: dto.workspace
+            workspace: dto
+                .workspace
                 .map(|w| WorkspaceId(w.gid))
                 .unwrap_or_else(|| WorkspaceId("unknown".to_string())),
-            created_at: dto.created_at
+            created_at: dto
+                .created_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now),
-            modified_at: dto.modified_at
+            modified_at: dto
+                .modified_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(Utc::now),
@@ -207,12 +214,10 @@ impl From<TaskUpdate> for TaskUpdateDto {
             name: update.name,
             notes: update.description,
             completed: update.completed,
-            due_on: update.due_date.map(|opt_date| 
-                opt_date.map(|date| date.format("%Y-%m-%d").to_string())
-            ),
-            assignee: update.assignee.map(|opt_user| 
-                opt_user.map(|user| user.0)
-            ),
+            due_on: update
+                .due_date
+                .map(|opt_date| opt_date.map(|date| date.format("%Y-%m-%d").to_string())),
+            assignee: update.assignee.map(|opt_user| opt_user.map(|user| user.0)),
         }
     }
 }

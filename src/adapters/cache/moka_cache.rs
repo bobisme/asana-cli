@@ -1,8 +1,8 @@
+use crate::ports::Cache;
 use async_trait::async_trait;
 use moka::future::Cache as MokaCache;
 use std::hash::Hash;
 use std::time::Duration;
-use crate::ports::Cache;
 
 pub struct MokaCacheAdapter<K, V> {
     inner: MokaCache<K, V>,
@@ -22,6 +22,7 @@ where
         Self { inner: cache }
     }
 
+    #[cfg(test)]
     pub fn with_default_settings() -> Self {
         Self::new(300, 10_000) // 5 minutes TTL, 10k max items
     }
@@ -62,19 +63,19 @@ mod tests {
     #[tokio::test]
     async fn test_cache_operations() {
         let cache = MokaCacheAdapter::<String, i32>::with_default_settings();
-        
+
         // Test insert and get
         cache.insert("key1".to_string(), 42).await;
         assert_eq!(cache.get(&"key1".to_string()).await, Some(42));
-        
+
         // Test contains_key
         assert!(cache.contains_key(&"key1".to_string()).await);
         assert!(!cache.contains_key(&"nonexistent".to_string()).await);
-        
+
         // Test remove
         cache.remove(&"key1".to_string()).await;
         assert_eq!(cache.get(&"key1".to_string()).await, None);
-        
+
         // Test clear
         cache.insert("key2".to_string(), 100).await;
         cache.insert("key3".to_string(), 200).await;

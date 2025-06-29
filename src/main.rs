@@ -1,19 +1,19 @@
-use std::sync::Arc;
-use color_eyre::Result;
 use clap::{Arg, Command};
+use color_eyre::Result;
+use std::sync::Arc;
 
-mod domain;
-mod ports;
 mod adapters;
 mod application;
+mod domain;
+mod ports;
 
 use adapters::{
     api::{AsanaClient, AsanaTaskRepository},
     cache::MokaCacheAdapter,
     config::FileConfigStore,
-    tui::{App, run_tui},
+    tui::{run_tui, App},
 };
-use application::{TaskService, StateManager, AppError};
+use application::{AppError, StateManager, TaskService};
 use ports::ConfigStore;
 
 #[tokio::main]
@@ -26,7 +26,7 @@ async fn main() -> Result<()> {
         .create(true)
         .append(true)
         .open("asana-cli.log")?;
-    
+
     tracing_subscriber::fmt()
         .with_writer(log_file)
         .with_max_level(tracing::Level::DEBUG)
@@ -109,7 +109,12 @@ async fn main() -> Result<()> {
         eprintln!("To get started:");
         eprintln!("1. Get your personal access token from https://developers.asana.com/");
         eprintln!("2. Run: export ASANA_TOKEN=your_token_here");
-        eprintln!("3. Or run: {} --token your_token_here", std::env::args().next().unwrap_or_else(|| "asana-cli".to_string()));
+        eprintln!(
+            "3. Or run: {} --token your_token_here",
+            std::env::args()
+                .next()
+                .unwrap_or_else(|| "asana-cli".to_string())
+        );
         eprintln!();
         AppError::AuthenticationRequired
     })?;
@@ -120,18 +125,18 @@ async fn main() -> Result<()> {
     // Create dependencies
     let api_client = AsanaClient::new(api_token);
     let task_repo = Arc::new(AsanaTaskRepository::new(api_client));
-    
+
     // Create caches
     let task_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
     let comment_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
-    
+
     // Create application services
     let task_service = Arc::new(TaskService::new(
         task_repo.clone(),
         task_cache,
         comment_cache,
     ));
-    
+
     let state_manager = Arc::new(StateManager::new(
         task_service,
         task_repo.clone(),
@@ -145,7 +150,7 @@ async fn main() -> Result<()> {
                 Some(("list", _)) => {
                     // Initialize state manager
                     state_manager.initialize().await?;
-                    
+
                     // Get tasks
                     match state_manager.get_tasks_for_current_workspace(false).await {
                         Ok(tasks) => {
@@ -161,7 +166,10 @@ async fn main() -> Result<()> {
                 Some(("stories", stories_matches)) => {
                     if let Some(task_id) = stories_matches.get_one::<String>("task_id") {
                         // Get stories for task
-                        match state_manager.get_task_comments(&task_id.as_str().into()).await {
+                        match state_manager
+                            .get_task_comments(&task_id.as_str().into())
+                            .await
+                        {
                             Ok(comments) => {
                                 let json = serde_json::to_string_pretty(&comments)?;
                                 println!("{json}");
@@ -184,7 +192,10 @@ async fn main() -> Result<()> {
                 Some(("list", list_matches)) => {
                     if let Some(task_id) = list_matches.get_one::<String>("task") {
                         // Get stories for task
-                        match state_manager.get_task_comments(&task_id.as_str().into()).await {
+                        match state_manager
+                            .get_task_comments(&task_id.as_str().into())
+                            .await
+                        {
                             Ok(comments) => {
                                 let json = serde_json::to_string_pretty(&comments)?;
                                 println!("{json}");
@@ -205,7 +216,7 @@ async fn main() -> Result<()> {
         None => {
             // Default behavior - run TUI
             let app = App::new(state_manager);
-            
+
             if let Err(e) = run_tui(app).await {
                 match &e.downcast_ref::<AppError>() {
                     Some(AppError::Application(msg)) => {

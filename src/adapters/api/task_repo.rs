@@ -1,7 +1,9 @@
-use async_trait::async_trait;
+use super::{
+    AsanaClient, CommentCreateDto, CommentDto, TaskDto, TaskUpdateDto, UserDto, WorkspaceDto,
+};
 use crate::domain::*;
-use crate::ports::{TaskRepository, ProjectRepository, WorkspaceRepository, RepositoryResult};
-use super::{AsanaClient, TaskDto, TaskUpdateDto, CommentDto, CommentCreateDto, ProjectDto, WorkspaceDto, UserDto};
+use crate::ports::{RepositoryResult, TaskRepository, WorkspaceRepository};
+use async_trait::async_trait;
 
 pub struct AsanaTaskRepository {
     client: AsanaClient,
@@ -75,7 +77,7 @@ impl TaskRepository for AsanaTaskRepository {
             "/tasks/{}?opt_fields=gid,name,notes,html_notes,completed,due_on,due_at,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,tags.gid,tags.name,created_at,modified_at,workspace.gid,workspace.name",
             id.0
         );
-        
+
         let task_dto: TaskDto = self.client.get(&path).await?;
         Ok(task_dto.into())
     }
@@ -84,7 +86,7 @@ impl TaskRepository for AsanaTaskRepository {
         let params = self.build_task_query_params(filter);
         let query_string = self.build_query_string(&params);
         let path = format!("/tasks{query_string}");
-        
+
         let task_dtos: Vec<TaskDto> = self.client.get_list(&path).await?;
         Ok(task_dtos.into_iter().map(|dto| dto.into()).collect())
     }
@@ -92,7 +94,7 @@ impl TaskRepository for AsanaTaskRepository {
     async fn update_task(&self, id: &TaskId, updates: &TaskUpdate) -> RepositoryResult<Task> {
         let path = format!("/tasks/{}", id.0);
         let update_dto: TaskUpdateDto = updates.clone().into();
-        
+
         let task_dto: TaskDto = self.client.put(&path, &update_dto).await?;
         Ok(task_dto.into())
     }
@@ -102,7 +104,7 @@ impl TaskRepository for AsanaTaskRepository {
             "/tasks/{}/stories?opt_fields=gid,text,created_by.gid,created_by.name,created_by.email,created_at,type,resource_subtype",
             task_id.0
         );
-        
+
         let comment_dtos: Vec<CommentDto> = self.client.get_list(&path).await?;
         Ok(comment_dtos
             .into_iter()
@@ -119,7 +121,7 @@ impl TaskRepository for AsanaTaskRepository {
         let create_dto = CommentCreateDto {
             text: content.to_string(),
         };
-        
+
         let comment_dto: CommentDto = self.client.post(&path, &create_dto).await?;
         let mut comment: Comment = comment_dto.into();
         comment.task_id = task_id.clone();
@@ -128,31 +130,17 @@ impl TaskRepository for AsanaTaskRepository {
 }
 
 #[async_trait]
-impl ProjectRepository for AsanaTaskRepository {
-    async fn list_projects(&self, workspace_id: Option<&WorkspaceId>) -> RepositoryResult<Vec<Project>> {
-        let mut path = "/projects?opt_fields=gid,name,notes,color,archived,workspace.gid,workspace.name,created_at,modified_at".to_string();
-        
-        if let Some(workspace) = workspace_id {
-            path.push_str(&format!("&workspace={}", workspace.0));
-        }
-        
-        let project_dtos: Vec<ProjectDto> = self.client.get_list(&path).await?;
-        Ok(project_dtos.into_iter().map(|dto| dto.into()).collect())
-    }
-}
-
-#[async_trait]
 impl WorkspaceRepository for AsanaTaskRepository {
     async fn list_workspaces(&self) -> RepositoryResult<Vec<Workspace>> {
         let path = "/workspaces?opt_fields=gid,name,is_organization";
-        
+
         let workspace_dtos: Vec<WorkspaceDto> = self.client.get(path).await?;
         Ok(workspace_dtos.into_iter().map(|dto| dto.into()).collect())
     }
 
     async fn get_current_user(&self) -> RepositoryResult<User> {
         let path = "/users/me?opt_fields=gid,name,email,photo.image_60x60";
-        
+
         let user_dto: UserDto = self.client.get(path).await?;
         Ok(user_dto.into())
     }

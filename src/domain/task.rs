@@ -23,7 +23,6 @@ impl From<&str> for TaskId {
     }
 }
 
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
@@ -47,7 +46,7 @@ impl Task {
             .map(|due| due < Utc::now() && !self.completed)
             .unwrap_or(false)
     }
-    
+
     /// Business rule: get display status with color
     pub fn status_display(&self) -> (&'static str, &'static str) {
         if self.completed {
@@ -56,7 +55,7 @@ impl Task {
             ("Incomplete", "gray")
         }
     }
-    
+
     /// Format due date for display
     pub fn due_date_display(&self) -> String {
         match self.due_date {
@@ -64,7 +63,7 @@ impl Task {
             Some(due) => {
                 let now = Utc::now();
                 let days_diff = (due.date_naive() - now.date_naive()).num_days();
-                
+
                 match days_diff {
                     0 => "Today".to_string(),
                     1 => "Tomorrow".to_string(),
@@ -119,10 +118,18 @@ impl TaskFilter {
     pub fn to_cache_key(&self) -> String {
         format!(
             "tasks:{}:{}:{}:{}:{}",
-            self.workspace.as_ref().map(|w| w.0.as_str()).unwrap_or("all"),
+            self.workspace
+                .as_ref()
+                .map(|w| w.0.as_str())
+                .unwrap_or("all"),
             self.project.as_ref().map(|p| p.0.as_str()).unwrap_or("all"),
-            self.assignee.as_ref().map(|a| a.0.as_str()).unwrap_or("all"),
-            self.completed.map(|c| c.to_string()).unwrap_or_else(|| "all".to_string()),
+            self.assignee
+                .as_ref()
+                .map(|a| a.0.as_str())
+                .unwrap_or("all"),
+            self.completed
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "all".to_string()),
             self.search_query.as_deref().unwrap_or(""),
         )
     }
