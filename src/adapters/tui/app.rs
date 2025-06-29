@@ -730,17 +730,18 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3),  // Task title
-                Constraint::Min(0),     // All scrollable content
+                Constraint::Min(2),     // Task title (flexible for wrapping)
+                Constraint::Min(5),     // All scrollable content
                 Constraint::Length(1),  // Instructions
             ])
             .margin(1)
             .split(popup_area);
         
-        // Render task title at top in bold
+        // Render task title at top in bold with wrapping
         let title_paragraph = Paragraph::new(task.name.clone())
             .style(Style::default().fg(Color::White).add_modifier(Modifier::BOLD))
-            .alignment(Alignment::Center);
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
         frame.render_widget(title_paragraph, chunks[0]);
         
         // Render all content as one scrollable section
@@ -751,9 +752,9 @@ impl App {
             .style(Style::default().fg(Color::Gray));
         frame.render_widget(instructions, chunks[2]);
         
-        // Render border without title
+        // Render border with title including task ID
         let border = Block::default()
-            .title("Task Detail")
+            .title(format!("Task Detail - {}", task.id.0))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(border, popup_area);
@@ -795,9 +796,10 @@ impl App {
             chunk_idx += 1;
         }
         
-        // Render separator
+        // Render separator - use actual area width
+        let separator_width = chunks[chunk_idx].width.saturating_sub(2) as usize; // Account for padding
         let separator = Paragraph::new(Line::from(vec![
-            Span::styled("─".repeat(90), Style::default().fg(Color::DarkGray))
+            Span::styled("─".repeat(separator_width), Style::default().fg(Color::DarkGray))
         ]));
         frame.render_widget(separator, chunks[chunk_idx]);
         chunk_idx += 1;
@@ -837,10 +839,11 @@ impl App {
         ]));
         
         // Assignee
-        if let Some(assignee_id) = &task.assignee {
+        if task.assignee.is_some() {
+            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
             lines.push(Line::from(vec![
                 Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
-                Span::raw(format!("User {}", assignee_id.0)),
+                Span::raw(assignee_display.to_string()),
             ]));
         }
         
@@ -854,7 +857,10 @@ impl App {
                 let markdown_desc = Self::html_to_markdown(description);
                 
                 // Parse and render markdown with custom styling
-                let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                
+                // Add blank line after Description header
+                styled_lines.insert(0, Line::from(""));
                 
                 let paragraph = Paragraph::new(styled_lines)
                     .wrap(Wrap { trim: true })
@@ -950,6 +956,16 @@ impl App {
             // Regular text
             else {
                 lines.push(Line::from(trimmed.to_string()));
+            }
+        }
+        
+        // Remove trailing empty lines to reduce blank space
+        while let Some(last_line) = lines.last() {
+            if last_line.spans.is_empty() || 
+               (last_line.spans.len() == 1 && last_line.spans[0].content.is_empty()) {
+                lines.pop();
+            } else {
+                break;
             }
         }
         
@@ -1190,10 +1206,11 @@ impl App {
         ]));
         
         // Assignee
-        if let Some(assignee_id) = &task.assignee {
+        if task.assignee.is_some() {
+            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
             lines.push(Line::from(vec![
                 Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
-                Span::raw(format!("User {}", assignee_id.0)),
+                Span::raw(assignee_display.to_string()),
             ]));
         }
         
