@@ -461,14 +461,16 @@ impl App {
             }
             
             AppEvent::NextTask => {
-                // Arrow keys only - for simple navigation
+                // Arrow keys work in both search and task list for navigation
                 match &self.mode {
                     AppMode::TaskDetail(_) => {
                         self.detail_scroll_offset = self.detail_scroll_offset.saturating_add(1);
                         self.clamp_scroll_offset();
                     }
                     _ => {
-                        if self.focused_widget == FocusedWidget::TaskList {
+                        // Allow navigation from both search and task list
+                        if self.focused_widget == FocusedWidget::TaskList || 
+                           self.focused_widget == FocusedWidget::Search {
                             self.next_task();
                         }
                     }
@@ -476,14 +478,16 @@ impl App {
             }
             
             AppEvent::PreviousTask => {
-                // Arrow keys only - for simple navigation
+                // Arrow keys work in both search and task list for navigation
                 match &self.mode {
                     AppMode::TaskDetail(_) => {
                         self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(1);
                         self.clamp_scroll_offset();
                     }
                     _ => {
-                        if self.focused_widget == FocusedWidget::TaskList {
+                        // Allow navigation from both search and task list
+                        if self.focused_widget == FocusedWidget::TaskList || 
+                           self.focused_widget == FocusedWidget::Search {
                             self.previous_task();
                         }
                     }
