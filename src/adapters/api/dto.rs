@@ -27,6 +27,7 @@ pub struct TaskDto {
     pub gid: String,
     pub name: String,
     pub notes: Option<String>,
+    pub html_notes: Option<String>,
     pub completed: bool,
     pub due_on: Option<String>, // YYYY-MM-DD format
     pub due_at: Option<String>, // ISO 8601 format
@@ -127,10 +128,11 @@ impl From<TaskDto> for Task {
         Self {
             id: TaskId(dto.gid),
             name: dto.name,
-            description: dto.notes,
+            description: dto.html_notes.or(dto.notes),
             completed: dto.completed,
             due_date,
-            assignee: dto.assignee.map(|u| UserId(u.gid)),
+            assignee: dto.assignee.as_ref().map(|u| UserId(u.gid.clone())),
+            assignee_name: dto.assignee.map(|u| u.name),
             projects: dto.projects.into_iter().map(|p| ProjectId(p.gid)).collect(),
             tags: dto.tags.into_iter().map(|t| t.name).collect(),
             created_at: DateTime::parse_from_rfc3339(&dto.created_at)

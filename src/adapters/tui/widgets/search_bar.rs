@@ -14,7 +14,7 @@ impl SearchBar {
         Self {
             query: String::new(),
             cursor_position: 0,
-            is_focused: true, // Start focused by default
+            is_focused: false, // Start unfocused by default
         }
     }
 

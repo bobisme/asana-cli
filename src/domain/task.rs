@@ -50,6 +50,7 @@ pub struct Task {
     pub completed: bool,
     pub due_date: Option<DateTime<Utc>>,
     pub assignee: Option<super::UserId>,
+    pub assignee_name: Option<String>,
     pub projects: Vec<super::ProjectId>,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
@@ -83,17 +84,9 @@ impl Task {
     /// Business rule: get display status with color
     pub fn status_display(&self) -> (&'static str, &'static str) {
         if self.completed {
-            ("✓", "green")
-        } else if self.is_overdue() {
-            ("!", "red")  // Removed warning emoji, just show exclamation
-        } else if let Some(due) = self.due_date {
-            if due.date_naive() == Utc::now().date_naive() {
-                ("⏰", "yellow")
-            } else {
-                ("○", "white")
-            }
+            ("Complete", "green")
         } else {
-            ("○", "white")
+            ("Incomplete", "gray")
         }
     }
     

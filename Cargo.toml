@@ -30,8 +30,11 @@ dirs = "5.0"
 # Secure credential storage
 keyring = "2.0"
 
-# Markdown rendering for terminal
-termimad = "0.28"
+# Markdown rendering for ratatui
+tui-markdown = "0.3"
+
+# HTML to markdown conversion
+htmd = "0.2"
 
 # Fuzzy search
 nucleo = "0.5"

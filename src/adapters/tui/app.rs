@@ -1,8 +1,9 @@
 use std::sync::Arc;
 use color_eyre::Result;
+use htmd;
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, ListState, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap, Row, Table, Cell, TableState},
+    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap, Row, Table, Cell, TableState},
 };
 use crate::application::StateManager;
 use crate::domain::{Task, TaskId, Comment};
@@ -56,11 +57,30 @@ pub struct App {
 }
 
 impl App {
+    /// Convert HTML description to markdown for better TUI rendering
+    fn html_to_markdown(html: &str) -> String {
+        if html.trim().is_empty() {
+            return String::new();
+        }
+        
+        // Convert HTML to markdown using htmd with better error handling
+        // htmd has better customization options for modifying HTML before conversion
+        match htmd::convert(html) {
+            Ok(markdown) => {
+                // Clean up extra whitespace and newlines
+                markdown.trim().to_string()
+            }
+            Err(_) => {
+                // Fallback to original HTML if conversion fails
+                html.to_string()
+            }
+        }
+    }
     pub fn new(state_manager: Arc<StateManager>) -> Self {
         let mut app = Self {
             state_manager,
             mode: AppMode::TaskList,
-            focused_widget: FocusedWidget::Search,
+            focused_widget: FocusedWidget::TaskList,
             search_bar: SearchBar::new(),
             search_query: String::new(),
             tasks: Vec::new(),
@@ -77,6 +97,7 @@ impl App {
         
         // Select first task by default
         app.task_list_state.select(Some(0));
+        app.search_bar.set_focused(false);
         app
     }
 
@@ -596,7 +617,6 @@ impl App {
         let rows: Vec<Row> = self.filtered_tasks
             .iter()
             .map(|task| {
-                let (status_text, _) = task.status_display();
                 let due_text = task.due_date_display();
                 
                 // Check if task is overdue for red coloring
@@ -608,7 +628,6 @@ impl App {
                 };
                 
                 Row::new(vec![
-                    Cell::from(status_text),
                     Cell::from(task.name.clone()),
                     Cell::from(due_text).style(due_style),
                 ])
@@ -618,7 +637,6 @@ impl App {
         let table = Table::new(
             rows,
             &[
-                Constraint::Length(4),  // Status column
                 Constraint::Min(20),    // Title column (flexible)
                 Constraint::Length(12), // Due date column
             ]
@@ -687,7 +705,7 @@ impl App {
     }
 
     fn render_task_detail(&self, frame: &mut Frame, _task_id: &TaskId) {
-        let popup_area = Self::centered_rect(85, 85, frame.area());
+        let popup_area = Self::centered_rect(70, 85, frame.area());
         
         frame.render_widget(ratatui::widgets::Clear, popup_area);
         
@@ -785,13 +803,18 @@ impl App {
                 lines.push(Line::from(vec![
                     Span::styled("Description:", Style::default().fg(Color::Cyan)),
                 ]));
-                lines.push(Line::from(description.as_str()));
+                let markdown_desc = Self::html_to_markdown(description);
+                for line in markdown_desc.lines() {
+                    lines.push(Line::from(line.to_string()));
+                }
             }
         }
         
         // Add separator before comments
         lines.push(Line::from(""));
-        lines.push(Line::from("─".repeat(60)));
+        lines.push(Line::from(vec![
+            Span::styled("─".repeat(90), Style::default().fg(Color::DarkGray))
+        ]));
         lines.push(Line::from(""));
         
         // Comments and activity
@@ -815,7 +838,7 @@ impl App {
             // Render user comments first
             if !user_comments.is_empty() {
                 lines.push(Line::from(vec![
-                    Span::styled("💬 Comments", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+                    Span::styled("Comments", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
                 ]));
                 lines.push(Line::from(""));
                 
@@ -842,16 +865,16 @@ impl App {
             // Render system activity
             if !system_activity.is_empty() {
                 lines.push(Line::from(vec![
-                    Span::styled("📋 Activity", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled("Activity", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
                 ]));
                 lines.push(Line::from(""));
                 
                 for activity in &system_activity {
                     let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
                     let icon = match activity.resource_subtype.as_deref() {
-                        Some("due_date_changed") => "📅",
-                        Some("duplicated") => "📄",
-                        Some("due_today") => "⏰",
+                        Some("due_date_changed") => "•",
+                        Some("duplicated") => "•",
+                        Some("due_today") => "•",
                         _ => "•",
                     };
                     
@@ -860,7 +883,6 @@ impl App {
                         Span::raw(activity.text.clone()),
                         Span::styled(format!(" ({})", time_display), Style::default().fg(Color::Gray)),
                     ]));
-                    lines.push(Line::from(""));
                 }
             }
         }
@@ -933,7 +955,10 @@ impl App {
                 lines.push(Line::from(vec![
                     Span::styled("Description:", Style::default().fg(Color::Cyan)),
                 ]));
-                lines.push(Line::from(description.as_str()));
+                let markdown_desc = Self::html_to_markdown(description);
+                for line in markdown_desc.lines() {
+                    lines.push(Line::from(line.to_string()));
+                }
             }
         }
         
