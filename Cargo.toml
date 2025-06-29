@@ -30,8 +30,7 @@ dirs = "5.0"
 # Secure credential storage
 keyring = "2.0"
 
-# Markdown rendering for ratatui
-tui-markdown = "0.3"
+# Custom markdown parsing (removed tui-markdown due to version conflicts)
 
 # HTML to markdown conversion
 htmd = "0.2"

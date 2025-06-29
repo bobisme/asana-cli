@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use color_eyre::Result;
 use htmd;
+// Removed tui_markdown due to version compatibility issues
 use ratatui::{
     prelude::*,
     widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap, Row, Table, Cell, TableState},
@@ -759,6 +760,53 @@ impl App {
     }
     
     fn render_scrollable_content(&self, frame: &mut Frame, area: Rect, task: &Task) {
+        // Calculate layout for different sections
+        let has_description = task.description.as_ref().map_or(false, |d| !d.trim().is_empty());
+        
+        let constraints = if has_description {
+            vec![
+                Constraint::Length(4),  // Task info (status, due date, assignee)
+                Constraint::Min(5),     // Description (markdown)
+                Constraint::Length(1),  // Separator
+                Constraint::Min(3),     // Comments/activity
+            ]
+        } else {
+            vec![
+                Constraint::Length(4),  // Task info
+                Constraint::Length(1),  // Separator
+                Constraint::Min(3),     // Comments/activity
+            ]
+        };
+        
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area);
+        
+        let mut chunk_idx = 0;
+        
+        // Render task info section
+        self.render_task_info_section(frame, chunks[chunk_idx], task);
+        chunk_idx += 1;
+        
+        // Render description with markdown if present
+        if has_description {
+            self.render_description_section(frame, chunks[chunk_idx], task);
+            chunk_idx += 1;
+        }
+        
+        // Render separator
+        let separator = Paragraph::new(Line::from(vec![
+            Span::styled("─".repeat(90), Style::default().fg(Color::DarkGray))
+        ]));
+        frame.render_widget(separator, chunks[chunk_idx]);
+        chunk_idx += 1;
+        
+        // Render comments/activity section
+        self.render_comments_section(frame, chunks[chunk_idx]);
+    }
+    
+    fn render_task_info_section(&self, frame: &mut Frame, area: Rect, task: &Task) {
         let mut lines = Vec::new();
         
         // Task info section
@@ -796,26 +844,227 @@ impl App {
             ]));
         }
         
-        // Description
+        let paragraph = Paragraph::new(lines);
+        frame.render_widget(paragraph, area);
+    }
+    
+    fn render_description_section(&self, frame: &mut Frame, area: Rect, task: &Task) {
         if let Some(description) = &task.description {
             if !description.trim().is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("Description:", Style::default().fg(Color::Cyan)),
-                ]));
                 let markdown_desc = Self::html_to_markdown(description);
-                for line in markdown_desc.lines() {
-                    lines.push(Line::from(line.to_string()));
+                
+                // Parse and render markdown with custom styling
+                let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                
+                let paragraph = Paragraph::new(styled_lines)
+                    .wrap(Wrap { trim: true })
+                    .block(Block::default()
+                        .title("Description")
+                        .title_style(Style::default().fg(Color::Cyan))
+                        .borders(Borders::NONE));
+                
+                frame.render_widget(paragraph, area);
+            }
+        }
+    }
+    
+    /// Parse markdown text and convert to styled Lines for better rendering
+    fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
+        let mut lines = Vec::new();
+        
+        for line in markdown.lines() {
+            let trimmed = line.trim();
+            
+            if trimmed.is_empty() {
+                lines.push(Line::from(""));
+                continue;
+            }
+            
+            // Handle headers
+            if trimmed.starts_with("# ") {
+                let text = &trimmed[2..];
+                lines.push(Line::from(vec![
+                    Span::styled(text.to_string(), Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD))
+                ]));
+                lines.push(Line::from(""));
+            } else if trimmed.starts_with("## ") {
+                let text = &trimmed[3..];
+                lines.push(Line::from(vec![
+                    Span::styled(text.to_string(), Style::default()
+                        .fg(Color::Blue)
+                        .add_modifier(Modifier::BOLD))
+                ]));
+            } else if trimmed.starts_with("### ") {
+                let text = &trimmed[4..];
+                lines.push(Line::from(vec![
+                    Span::styled(text.to_string(), Style::default()
+                        .fg(Color::Cyan)
+                        .add_modifier(Modifier::BOLD))
+                ]));
+            }
+            // Handle bullet points
+            else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+                let text = &trimmed[2..];
+                lines.push(Line::from(vec![
+                    Span::styled("• ", Style::default().fg(Color::Green)),
+                    Span::raw(text.to_string()),
+                ]));
+            }
+            // Handle numbered lists
+            else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) && trimmed.contains(". ") {
+                if let Some(dot_pos) = trimmed.find(". ") {
+                    let number = &trimmed[..dot_pos + 1];
+                    let text = &trimmed[dot_pos + 2..];
+                    lines.push(Line::from(vec![
+                        Span::styled(format!("{} ", number), Style::default().fg(Color::Magenta)),
+                        Span::raw(text.to_string()),
+                    ]));
+                } else {
+                    lines.push(Line::from(trimmed.to_string()));
                 }
+            }
+            // Handle bold text (basic **text** parsing)
+            else if trimmed.contains("**") {
+                let styled_line = Self::parse_bold_text(trimmed);
+                lines.push(styled_line);
+            }
+            // Handle italic text (basic *text* parsing)
+            else if trimmed.contains('*') && !trimmed.starts_with("*") {
+                let styled_line = Self::parse_italic_text(trimmed);
+                lines.push(styled_line);
+            }
+            // Handle code blocks or inline code
+            else if trimmed.starts_with("```") {
+                lines.push(Line::from(vec![
+                    Span::styled(trimmed.to_string(), Style::default()
+                        .fg(Color::Gray)
+                        .bg(Color::DarkGray))
+                ]));
+            }
+            else if trimmed.contains('`') {
+                let styled_line = Self::parse_inline_code(trimmed);
+                lines.push(styled_line);
+            }
+            // Regular text
+            else {
+                lines.push(Line::from(trimmed.to_string()));
             }
         }
         
-        // Add separator before comments
-        lines.push(Line::from(""));
-        lines.push(Line::from(vec![
-            Span::styled("─".repeat(90), Style::default().fg(Color::DarkGray))
-        ]));
-        lines.push(Line::from(""));
+        lines
+    }
+    
+    /// Parse bold text (**text**)
+    fn parse_bold_text(text: &str) -> Line<'static> {
+        let mut spans = Vec::new();
+        let mut current = String::new();
+        let mut in_bold = false;
+        let mut chars = text.chars().peekable();
+        
+        while let Some(ch) = chars.next() {
+            if ch == '*' && chars.peek() == Some(&'*') {
+                chars.next(); // consume second *
+                if !current.is_empty() {
+                    spans.push(if in_bold {
+                        Span::styled(current.clone(), Style::default().add_modifier(Modifier::BOLD))
+                    } else {
+                        Span::raw(current.clone())
+                    });
+                    current.clear();
+                }
+                in_bold = !in_bold;
+            } else {
+                current.push(ch);
+            }
+        }
+        
+        if !current.is_empty() {
+            spans.push(if in_bold {
+                Span::styled(current, Style::default().add_modifier(Modifier::BOLD))
+            } else {
+                Span::raw(current)
+            });
+        }
+        
+        Line::from(spans)
+    }
+    
+    /// Parse italic text (*text*)
+    fn parse_italic_text(text: &str) -> Line<'static> {
+        let mut spans = Vec::new();
+        let mut current = String::new();
+        let mut in_italic = false;
+        
+        for ch in text.chars() {
+            if ch == '*' && !in_italic {
+                if !current.is_empty() {
+                    spans.push(Span::raw(current.clone()));
+                    current.clear();
+                }
+                in_italic = true;
+            } else if ch == '*' && in_italic {
+                if !current.is_empty() {
+                    spans.push(Span::styled(current.clone(), Style::default().add_modifier(Modifier::ITALIC)));
+                    current.clear();
+                }
+                in_italic = false;
+            } else {
+                current.push(ch);
+            }
+        }
+        
+        if !current.is_empty() {
+            spans.push(if in_italic {
+                Span::styled(current, Style::default().add_modifier(Modifier::ITALIC))
+            } else {
+                Span::raw(current)
+            });
+        }
+        
+        Line::from(spans)
+    }
+    
+    /// Parse inline code (`code`)
+    fn parse_inline_code(text: &str) -> Line<'static> {
+        let mut spans = Vec::new();
+        let mut current = String::new();
+        let mut in_code = false;
+        
+        for ch in text.chars() {
+            if ch == '`' {
+                if !current.is_empty() {
+                    spans.push(if in_code {
+                        Span::styled(current.clone(), Style::default()
+                            .fg(Color::Green)
+                            .bg(Color::DarkGray))
+                    } else {
+                        Span::raw(current.clone())
+                    });
+                    current.clear();
+                }
+                in_code = !in_code;
+            } else {
+                current.push(ch);
+            }
+        }
+        
+        if !current.is_empty() {
+            spans.push(if in_code {
+                Span::styled(current, Style::default()
+                    .fg(Color::Green)
+                    .bg(Color::DarkGray))
+            } else {
+                Span::raw(current)
+            });
+        }
+        
+        Line::from(spans)
+    }
+    
+    fn render_comments_section(&self, frame: &mut Frame, area: Rect) {
+        let mut lines = Vec::new();
         
         // Comments and activity
         if self.task_comments.is_empty() {
