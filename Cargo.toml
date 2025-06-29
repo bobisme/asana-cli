@@ -1,0 +1,58 @@
+[package]
+name = "asana-cli"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# TUI Framework
+ratatui = "0.28"
+crossterm = "0.27"
+
+# Async runtime and HTTP client
+tokio = { version = "1.0", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Caching
+moka = { version = "0.12", features = ["future"] }
+dashmap = "5.5"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# CLI and configuration
+clap = { version = "4.0", features = ["derive"] }
+dirs = "5.0"
+
+# Secure credential storage
+keyring = "2.0"
+
+# Markdown rendering for terminal
+termimad = "0.28"
+
+# Fuzzy search
+nucleo = "0.5"
+
+# Error handling
+thiserror = "1.0"
+color-eyre = "0.6"
+
+# Async traits
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# UUID handling
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# URL encoding
+urlencoding = "2.1"
+
+[dev-dependencies]
+mockall = "0.12"
+tokio-test = "0.4"
