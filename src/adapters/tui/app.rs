@@ -18,15 +18,16 @@ use ratatui::{
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum AppMode {
-    TaskList,
-    TaskDetail(TaskId),
+    Main,  // Split layout: task list + details
     Help,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum FocusedWidget {
+pub enum FocusedPane {
     Search,
-    TaskList,
+    TaskList,     // Left pane
+    Description,  // Right top pane
+    Comments,     // Right bottom pane
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +41,7 @@ pub struct App {
 
     // UI State
     mode: AppMode,
-    focused_widget: FocusedWidget,
+    focused_pane: FocusedPane,
 
     // Search
     search_bar: SearchBar,
@@ -67,13 +68,14 @@ pub struct App {
     focused_detail_pane: TaskDetailPane,
     description_scroll_offset: u16,
     comments_scroll_offset: u16,
+    needs_task_reload: bool,
 }
 
 impl App {
     /// Handle character input with search priority
     /// If search is focused, the character goes to search. Otherwise, return true to indicate action should be executed.
     fn handle_char_with_search_priority(&mut self, c: char) -> bool {
-        if self.focused_widget == FocusedWidget::Search {
+        if self.focused_pane == FocusedPane::Search {
             self.search_bar.insert_char(c);
             self.search_query = self.search_bar.query().to_string();
             self.update_filtered_tasks();
@@ -105,8 +107,8 @@ impl App {
     pub fn new(state_manager: Arc<StateManager>) -> Self {
         let mut app = Self {
             state_manager,
-            mode: AppMode::TaskList,
-            focused_widget: FocusedWidget::TaskList,
+            mode: AppMode::Main,
+            focused_pane: FocusedPane::TaskList,
             search_bar: SearchBar::new(),
             search_query: String::new(),
             tasks: Vec::new(),
@@ -123,11 +125,13 @@ impl App {
             focused_detail_pane: TaskDetailPane::Description,
             description_scroll_offset: 0,
             comments_scroll_offset: 0,
+            needs_task_reload: false,
         };
 
         // Select first task by default
         app.task_list_state.select(Some(0));
         app.search_bar.set_focused(false);
+        app.needs_task_reload = true; // Load first task details on startup
         app
     }
 
@@ -311,57 +315,42 @@ impl App {
             AppEvent::Quit => return Ok(true),
 
             AppEvent::FocusSearch => {
-                self.focused_widget = FocusedWidget::Search;
+                self.focused_pane = FocusedPane::Search;
                 self.search_bar.set_focused(true);
             }
 
             AppEvent::Tab => {
-                match self.mode {
-                    AppMode::TaskDetail(_) => {
-                        // Switch between description and comments panes
-                        self.focused_detail_pane = match self.focused_detail_pane {
-                            TaskDetailPane::Description => TaskDetailPane::Comments,
-                            TaskDetailPane::Comments => TaskDetailPane::Description,
-                        };
+                match self.focused_pane {
+                    FocusedPane::Search => {
+                        self.focused_pane = FocusedPane::TaskList;
+                        self.search_bar.set_focused(false);
                     }
-                    _ => {
-                        // Handle normal widget focus switching
-                        match self.focused_widget {
-                            FocusedWidget::Search => {
-                                self.focused_widget = FocusedWidget::TaskList;
-                                self.search_bar.set_focused(false);
-                            }
-                            FocusedWidget::TaskList => {
-                                self.focused_widget = FocusedWidget::Search;
-                                self.search_bar.set_focused(true);
-                            }
-                        }
+                    FocusedPane::TaskList => {
+                        self.focused_pane = FocusedPane::Description;
+                    }
+                    FocusedPane::Description => {
+                        self.focused_pane = FocusedPane::Comments;
+                    }
+                    FocusedPane::Comments => {
+                        self.focused_pane = FocusedPane::TaskList;
                     }
                 }
             }
 
             AppEvent::BackTab => {
                 // Same as Tab but in reverse
-                match self.mode {
-                    AppMode::TaskDetail(_) => {
-                        // Switch between description and comments panes (reverse direction)
-                        self.focused_detail_pane = match self.focused_detail_pane {
-                            TaskDetailPane::Description => TaskDetailPane::Comments,
-                            TaskDetailPane::Comments => TaskDetailPane::Description,
-                        };
+                match self.focused_pane {
+                    FocusedPane::Search => {
+                        self.focused_pane = FocusedPane::Comments;
                     }
-                    _ => {
-                        // Handle normal widget focus switching (reverse direction)
-                        match self.focused_widget {
-                            FocusedWidget::Search => {
-                                self.focused_widget = FocusedWidget::TaskList;
-                                self.search_bar.set_focused(false);
-                            }
-                            FocusedWidget::TaskList => {
-                                self.focused_widget = FocusedWidget::Search;
-                                self.search_bar.set_focused(true);
-                            }
-                        }
+                    FocusedPane::TaskList => {
+                        self.focused_pane = FocusedPane::Comments;
+                    }
+                    FocusedPane::Description => {
+                        self.focused_pane = FocusedPane::TaskList;
+                    }
+                    FocusedPane::Comments => {
+                        self.focused_pane = FocusedPane::Description;
                     }
                 }
             }
@@ -370,15 +359,15 @@ impl App {
                 match c {
                     'q' => {
                         // Search takes priority - if search is focused, type the character
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
                         } else {
                             // Context-sensitive quit when not in search
                             match &self.mode {
-                                AppMode::TaskDetail(_) | AppMode::Help => {
-                                    self.mode = AppMode::TaskList;
+                                AppMode::Help => {
+                                    self.mode = AppMode::Main;
                                 }
                                 _ => {
                                     return Ok(true); // Quit app
@@ -387,41 +376,32 @@ impl App {
                         }
                     }
                     'j' => {
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
                         } else {
-                            match &self.mode {
-                                AppMode::TaskDetail(_) => {
-                                    match self.focused_detail_pane {
-                                        TaskDetailPane::Description => {
-                                            self.description_scroll_offset =
-                                                self.description_scroll_offset.saturating_add(1);
-                                        }
-                                        TaskDetailPane::Comments => {
-                                            self.comments_scroll_offset =
-                                                self.comments_scroll_offset.saturating_add(1);
-                                        }
-                                    }
-                                    self.clamp_scroll_offset();
-                                }
-                                _ => {
-                                    if self.focused_widget == FocusedWidget::TaskList {
-                                        self.next_task();
-                                    }
-                                }
+                            if self.focused_pane == FocusedPane::Description {
+                                self.description_scroll_offset =
+                                    self.description_scroll_offset.saturating_add(1);
+                                self.clamp_scroll_offset();
+                            } else if self.focused_pane == FocusedPane::Comments {
+                                self.comments_scroll_offset =
+                                    self.comments_scroll_offset.saturating_add(1);
+                                self.clamp_scroll_offset();
+                            } else if self.focused_pane == FocusedPane::TaskList {
+                                self.next_task();
                             }
                         }
                     }
                     'k' => {
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
                         } else {
                             match &self.mode {
-                                AppMode::TaskDetail(_) => {
+                                _ if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments => {
                                     match self.focused_detail_pane {
                                         TaskDetailPane::Description => {
                                             self.description_scroll_offset =
@@ -435,7 +415,7 @@ impl App {
                                     self.clamp_scroll_offset();
                                 }
                                 _ => {
-                                    if self.focused_widget == FocusedWidget::TaskList {
+                                    if self.focused_pane == FocusedPane::TaskList {
                                         self.previous_task();
                                     }
                                 }
@@ -443,17 +423,17 @@ impl App {
                         }
                     }
                     'g' => {
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
                         } else {
                             match &self.mode {
-                                AppMode::TaskDetail(_) => {
+                                _ if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments => {
                                     self.detail_scroll_offset = 0;
                                 }
                                 _ => {
-                                    if self.focused_widget == FocusedWidget::TaskList
+                                    if self.focused_pane == FocusedPane::TaskList
                                         && !self.filtered_tasks.is_empty()
                                     {
                                         self.task_list_state.select(Some(0));
@@ -463,18 +443,18 @@ impl App {
                         }
                     }
                     'G' => {
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
                         } else {
                             match &self.mode {
-                                AppMode::TaskDetail(_) => {
+                                _ if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments => {
                                     self.detail_scroll_offset = u16::MAX;
                                     self.clamp_scroll_offset();
                                 }
                                 _ => {
-                                    if self.focused_widget == FocusedWidget::TaskList
+                                    if self.focused_pane == FocusedPane::TaskList
                                         && !self.filtered_tasks.is_empty()
                                     {
                                         self.task_list_state
@@ -505,7 +485,7 @@ impl App {
                     ' ' => {
                         if self.handle_char_with_search_priority(c) {
                             // Toggle task completion when not in search
-                            if self.focused_widget == FocusedWidget::TaskList {
+                            if self.focused_pane == FocusedPane::TaskList {
                                 if let Some(selected) = self.task_list_state.selected() {
                                     if let Some(task) = self.filtered_tasks.get(selected) {
                                         match self
@@ -528,7 +508,7 @@ impl App {
                     }
                     _ => {
                         // Regular character input for search
-                        if self.focused_widget == FocusedWidget::Search {
+                        if self.focused_pane == FocusedPane::Search {
                             self.search_bar.insert_char(c);
                             self.search_query = self.search_bar.query().to_string();
                             self.update_filtered_tasks();
@@ -538,7 +518,7 @@ impl App {
             }
 
             AppEvent::Backspace => {
-                if self.focused_widget == FocusedWidget::Search {
+                if self.focused_pane == FocusedPane::Search {
                     self.search_bar.delete_char();
                     self.search_query = self.search_bar.query().to_string();
                     self.update_filtered_tasks();
@@ -546,23 +526,23 @@ impl App {
             }
 
             AppEvent::CloseModal => {
-                if self.focused_widget == FocusedWidget::Search {
+                if self.focused_pane == FocusedPane::Search {
                     // Esc from search: clear search and focus task list
                     self.search_bar.clear();
                     self.search_query.clear();
                     self.update_filtered_tasks();
-                    self.focused_widget = FocusedWidget::TaskList;
+                    self.focused_pane = FocusedPane::TaskList;
                     self.search_bar.set_focused(false);
                 } else {
                     // Esc from other contexts: close modals/details
-                    self.mode = AppMode::TaskList;
+                    self.mode = AppMode::Main;
                 }
             }
 
             AppEvent::NextTask => {
                 // Arrow keys work in both search and task list for navigation
                 match &self.mode {
-                    AppMode::TaskDetail(_) => {
+                    _ if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments => {
                         match self.focused_detail_pane {
                             TaskDetailPane::Description => {
                                 self.description_scroll_offset =
@@ -577,8 +557,8 @@ impl App {
                     }
                     _ => {
                         // Allow navigation from both search and task list
-                        if self.focused_widget == FocusedWidget::TaskList
-                            || self.focused_widget == FocusedWidget::Search
+                        if self.focused_pane == FocusedPane::TaskList
+                            || self.focused_pane == FocusedPane::Search
                         {
                             self.next_task();
                         }
@@ -589,7 +569,7 @@ impl App {
             AppEvent::PreviousTask => {
                 // Arrow keys work in both search and task list for navigation
                 match &self.mode {
-                    AppMode::TaskDetail(_) => {
+                    _ if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments => {
                         match self.focused_detail_pane {
                             TaskDetailPane::Description => {
                                 self.description_scroll_offset =
@@ -604,8 +584,8 @@ impl App {
                     }
                     _ => {
                         // Allow navigation from both search and task list
-                        if self.focused_widget == FocusedWidget::TaskList
-                            || self.focused_widget == FocusedWidget::Search
+                        if self.focused_pane == FocusedPane::TaskList
+                            || self.focused_pane == FocusedPane::Search
                         {
                             self.previous_task();
                         }
@@ -614,25 +594,19 @@ impl App {
             }
 
             AppEvent::Enter => {
-                if self.focused_widget == FocusedWidget::Search {
+                if self.focused_pane == FocusedPane::Search {
                     // Enter from search: switch to task list and select highlighted task
-                    self.focused_widget = FocusedWidget::TaskList;
+                    self.focused_pane = FocusedPane::TaskList;
                     self.search_bar.set_focused(false);
 
-                    // If there's a selected task, open its details
+                    // Switch focus to task list
+                    self.focused_pane = FocusedPane::TaskList;
+                } else if self.focused_pane == FocusedPane::TaskList {
+                    // Focus the task details pane and load details for selected task
+                    self.focused_pane = FocusedPane::Description;
                     if let Some(selected) = self.task_list_state.selected() {
                         if let Some(task) = self.filtered_tasks.get(selected) {
                             let task_id = task.id.clone();
-                            self.mode = AppMode::TaskDetail(task_id.clone());
-                            self.load_task_details(&task_id).await?;
-                        }
-                    }
-                } else if self.focused_widget == FocusedWidget::TaskList {
-                    // Enter from task list: open task details
-                    if let Some(selected) = self.task_list_state.selected() {
-                        if let Some(task) = self.filtered_tasks.get(selected) {
-                            let task_id = task.id.clone();
-                            self.mode = AppMode::TaskDetail(task_id.clone());
                             self.load_task_details(&task_id).await?;
                         }
                     }
@@ -640,7 +614,7 @@ impl App {
             }
 
             AppEvent::ScrollDetailPageUp => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
+                if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments {
                     match self.focused_detail_pane {
                         TaskDetailPane::Description => {
                             self.description_scroll_offset =
@@ -656,7 +630,7 @@ impl App {
             }
 
             AppEvent::ScrollDetailPageDown => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
+                if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments {
                     match self.focused_detail_pane {
                         TaskDetailPane::Description => {
                             self.description_scroll_offset =
@@ -687,6 +661,7 @@ impl App {
             current + 1
         };
         self.task_list_state.select(Some(next));
+        self.needs_task_reload = true;
     }
 
     fn previous_task(&mut self) {
@@ -701,39 +676,395 @@ impl App {
             current - 1
         };
         self.task_list_state.select(Some(previous));
+        self.needs_task_reload = true;
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
-        let chunks = Layout::default()
+        let main_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3), // Search bar
-                Constraint::Min(0),    // Task list
+                Constraint::Min(0),    // Main content (split left/right)
                 Constraint::Length(1), // Status bar
             ])
             .split(frame.area());
 
         // Render search bar
-        self.search_bar.render(frame, chunks[0]);
+        self.search_bar.render(frame, main_chunks[0]);
 
-        // Render task list
-        self.render_task_list(frame, chunks[1]);
+        // Split main content area: task list (left) | right side
+        let content_chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(40), // Task list (left pane)
+                Constraint::Percentage(60), // Right side (description + comments)
+            ])
+            .split(main_chunks[1]);
+
+        // Render task list (left pane)
+        self.render_task_list(frame, content_chunks[0]);
+
+        // Split right side vertically: description (top) | comments (bottom)
+        let right_chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Percentage(50), // Description pane
+                Constraint::Percentage(50), // Comments pane
+            ])
+            .split(content_chunks[1]);
+
+        // Render description pane (right top)
+        self.render_description_pane_standalone(frame, right_chunks[0]);
+
+        // Render comments pane (right bottom)
+        self.render_comments_pane_standalone(frame, right_chunks[1]);
 
         // Render status bar
-        self.render_status_bar(frame, chunks[2]);
+        self.render_status_bar(frame, main_chunks[2]);
 
-        // Render modals
-        match &self.mode {
-            AppMode::Help => self.render_help(frame),
-            AppMode::TaskDetail(task_id) => self.render_task_detail(frame, task_id),
-            _ => {}
+        // Render help modal if active
+        if matches!(self.mode, AppMode::Help) {
+            self.render_help(frame);
         }
+    }
+
+    /// Auto-load task details when selection changes
+    pub async fn auto_load_selected_task(&mut self) -> Result<()> {
+        if !self.needs_task_reload {
+            return Ok(());
+        }
+        
+        self.needs_task_reload = false;
+        
+        if let Some(selected) = self.task_list_state.selected() {
+            if let Some(task) = self.filtered_tasks.get(selected) {
+                let task_id = task.id.clone();
+                
+                // Only reload if it's a different task
+                let needs_loading = self.current_task.as_ref()
+                    .map(|current| current.id != task_id)
+                    .unwrap_or(true);
+                    
+                if needs_loading {
+                    self.load_task_details(&task_id).await?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    fn render_description_pane_standalone(&mut self, frame: &mut Frame, area: Rect) {
+        // Determine border style based on focus
+        let border_style = if self.focused_pane == FocusedPane::Description {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        let title = if self.focused_pane == FocusedPane::Description {
+            "Description [FOCUSED]"
+        } else {
+            "Description"
+        };
+
+        // Get currently selected task
+        let selected_task = self.task_list_state.selected()
+            .and_then(|i| self.filtered_tasks.get(i));
+
+        if let Some(task) = selected_task {
+            if let Some(current_task) = &self.current_task {
+                if current_task.id == task.id {
+                    // Show task description using existing render logic
+                    let block = Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(border_style);
+
+                    let inner_area = block.inner(area);
+                    frame.render_widget(block, area);
+
+                    // Render description content
+                    self.render_description_content_only(frame, inner_area, current_task);
+                } else {
+                    // Loading different task
+                    self.render_loading_placeholder(frame, area, title, border_style);
+                }
+            } else {
+                // No task loaded
+                self.render_loading_placeholder(frame, area, title, border_style);
+            }
+        } else {
+            // No task selected
+            self.render_empty_placeholder(frame, area, title, border_style, "No task selected");
+        }
+    }
+
+    fn render_comments_pane_standalone(&mut self, frame: &mut Frame, area: Rect) {
+        // Determine border style based on focus
+        let border_style = if self.focused_pane == FocusedPane::Comments {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        let title = if self.focused_pane == FocusedPane::Comments {
+            "Comments & Activity [FOCUSED]"
+        } else {
+            "Comments & Activity"
+        };
+
+        // Get currently selected task
+        let selected_task = self.task_list_state.selected()
+            .and_then(|i| self.filtered_tasks.get(i));
+
+        if let Some(task) = selected_task {
+            if let Some(current_task) = &self.current_task {
+                if current_task.id == task.id {
+                    // Show comments using existing render logic
+                    let block = Block::default()
+                        .title(title)
+                        .borders(Borders::ALL)
+                        .border_type(BorderType::Rounded)
+                        .border_style(border_style);
+
+                    let inner_area = block.inner(area);
+                    frame.render_widget(block, area);
+
+                    // Render comments content
+                    self.render_comments_content_only(frame, inner_area);
+                } else {
+                    // Loading different task
+                    self.render_loading_placeholder(frame, area, title, border_style);
+                }
+            } else {
+                // No task loaded
+                self.render_loading_placeholder(frame, area, title, border_style);
+            }
+        } else {
+            // No task selected
+            self.render_empty_placeholder(frame, area, title, border_style, "No task selected");
+        }
+    }
+
+    fn render_loading_placeholder(&self, frame: &mut Frame, area: Rect, title: &str, border_style: Style) {
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style);
+
+        let paragraph = Paragraph::new("Loading...")
+            .block(block)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_empty_placeholder(&self, frame: &mut Frame, area: Rect, title: &str, border_style: Style, message: &str) {
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style);
+
+        let paragraph = Paragraph::new(message)
+            .block(block)
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_description_content_only(&self, frame: &mut Frame, area: Rect, task: &Task) {
+        // Collect description content
+        let mut lines = Vec::new();
+
+        // Add task info section
+        let (status_text, status_color) = task.status_display();
+        let status_style = match status_color {
+            "red" => Style::default().fg(Color::Red),
+            "yellow" => Style::default().fg(Color::Yellow),
+            "green" => Style::default().fg(Color::Green),
+            "gray" => Style::default().fg(Color::Gray),
+            _ => Style::default(),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Cyan)),
+            Span::styled(status_text, status_style),
+        ]));
+
+        let due_text = task.due_date_display();
+        let due_style = if task.is_overdue() {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Due: ", Style::default().fg(Color::Cyan)),
+            Span::styled(due_text, due_style),
+        ]));
+
+        if task.assignee.is_some() {
+            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
+            lines.push(Line::from(vec![
+                Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
+                Span::raw(assignee_display.to_string()),
+            ]));
+        }
+
+        // Add blank line separator
+        lines.push(Line::from(""));
+
+        // Add description if present
+        if let Some(description) = &task.description {
+            if !description.trim().is_empty() {
+                let markdown_desc = Self::html_to_markdown(description);
+                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+
+                // Add description header
+                styled_lines.insert(
+                    0,
+                    Line::from(vec![Span::styled(
+                        "Description:",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
+                );
+
+                lines.extend(styled_lines);
+            }
+        } else {
+            lines.push(Line::from(vec![Span::styled(
+                "No description available",
+                Style::default().fg(Color::Gray),
+            )]));
+        }
+
+        // Apply scrolling - skip lines based on scroll offset
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(self.description_scroll_offset as usize)
+            .collect();
+
+        let paragraph = Paragraph::new(visible_lines)
+            .wrap(Wrap { trim: true })
+            .alignment(ratatui::layout::Alignment::Left);
+        frame.render_widget(paragraph, area);
+    }
+
+    fn render_comments_content_only(&self, frame: &mut Frame, area: Rect) {
+        // Collect comments content
+        let mut lines = Vec::new();
+
+        // Comments and activity
+        if self.task_comments.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "No comments or activity",
+                Style::default().fg(Color::Gray),
+            )]));
+        } else {
+            // Separate comments from system activity
+            let mut user_comments = Vec::new();
+            let mut system_activity = Vec::new();
+
+            for comment in &self.task_comments {
+                match comment.story_type.as_deref() {
+                    Some("comment") => user_comments.push(comment),
+                    Some("system") => system_activity.push(comment),
+                    _ => system_activity.push(comment), // Default to system if unclear
+                }
+            }
+
+            // Render user comments first
+            if !user_comments.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Comments",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(""));
+
+                for comment in &user_comments {
+                    let author_name = comment
+                        .author
+                        .as_ref()
+                        .map(|u| u.name.as_str())
+                        .unwrap_or("Unknown");
+                    let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
+                    
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            author_name,
+                            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({})", time_display),
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ]));
+
+                    let cleaned_text = Self::html_to_markdown(&comment.text);
+                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    lines.push(Line::from(""));
+                }
+            }
+
+            // Render system activity
+            if !system_activity.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Activity",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(""));
+
+                for activity in &system_activity {
+                    let author_name = activity
+                        .author
+                        .as_ref()
+                        .map(|u| u.name.as_str())
+                        .unwrap_or("Unknown");
+                    let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
+                    
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Blue)),
+                        Span::styled(
+                            author_name,
+                            Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({})", time_display),
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ]));
+
+                    let cleaned_text = Self::html_to_markdown(&activity.text);
+                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    lines.push(Line::from(""));
+                }
+            }
+        }
+
+        // Apply scrolling - skip lines based on scroll offset
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(self.comments_scroll_offset as usize)
+            .collect();
+
+        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
     }
 
     fn render_task_list(&mut self, frame: &mut Frame, area: Rect) {
         let len = self.filtered_tasks.len();
         let title = format!("Tasks ({len})");
-        let border_style = if self.focused_widget == FocusedWidget::TaskList {
+        let border_style = if self.focused_pane == FocusedPane::TaskList {
             Style::default().fg(Color::Yellow)
         } else {
             Style::default().fg(Color::Gray)
@@ -810,13 +1141,92 @@ impl App {
     }
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
-        let help_text = match self.focused_widget {
-            FocusedWidget::Search => "Tab: switch to tasks | Enter: go to tasks | /: focus search | q: quit | ?: help",
-            FocusedWidget::TaskList => "j/k: navigate | Enter: view task | Space: toggle complete | /: search | q: quit | ?: help",
+        let help_text = match self.focused_pane {
+            FocusedPane::Search => "Tab: switch to tasks | Enter: go to tasks | /: focus search | q: quit | ?: help",
+            FocusedPane::TaskList => "j/k: navigate | Tab: switch panes | Space: toggle complete | /: search | q: quit | ?: help",
+            FocusedPane::Description => "j/k: scroll | Tab: next pane | q: quit | ?: help",
+            FocusedPane::Comments => "j/k: scroll | Tab: next pane | q: quit | ?: help",
         };
 
         let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
         frame.render_widget(paragraph, area);
+    }
+
+    fn render_task_details_pane(&mut self, frame: &mut Frame, area: Rect) {
+        // Determine border style based on focus
+        let border_style = if self.focused_pane == FocusedPane::Description || self.focused_pane == FocusedPane::Comments {
+            Style::default().fg(Color::Yellow)
+        } else {
+            Style::default().fg(Color::Gray)
+        };
+
+        // Get currently selected task
+        let selected_task = self.task_list_state.selected()
+            .and_then(|i| self.filtered_tasks.get(i));
+
+        if let Some(task) = selected_task {
+            // Auto-load task details if not already loaded or if different task
+            let needs_loading = self.current_task.as_ref()
+                .map(|current| current.id != task.id)
+                .unwrap_or(true);
+
+            if needs_loading && !self.detail_loading {
+                // Trigger async loading - we'll handle this in event processing
+                // For now, show loading state
+            }
+
+            if self.detail_loading {
+                // Show loading state
+                let block = Block::default()
+                    .title("Task Details")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style);
+
+                let paragraph = Paragraph::new("Loading task details...")
+                    .block(block)
+                    .style(Style::default().fg(Color::Gray));
+                frame.render_widget(paragraph, area);
+            } else if let Some(current_task) = &self.current_task {
+                // Show task details using existing render logic
+                let block = Block::default()
+                    .title(format!("Task Details - {}", current_task.name))
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style);
+
+                let inner_area = block.inner(area);
+                frame.render_widget(block, area);
+
+                // Use existing scrollable content renderer
+                self.render_scrollable_content(frame, inner_area, current_task);
+            } else {
+                // Task selected but details not loaded yet
+                let block = Block::default()
+                    .title("Task Details")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(border_style);
+
+                let paragraph = Paragraph::new("Select a task to view details")
+                    .block(block)
+                    .style(Style::default().fg(Color::Gray));
+                frame.render_widget(paragraph, area);
+            }
+        } else {
+            // No task selected - show placeholder
+            let block = Block::default()
+                .title("Task Details")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(border_style);
+
+            let paragraph = Paragraph::new("No task selected\n\nUse ↑↓ to select a task")
+                .block(block)
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Center);
+            frame.render_widget(paragraph, area);
+        }
     }
 
     fn render_help(&self, frame: &mut Frame) {
@@ -1655,6 +2065,9 @@ pub async fn run_tui(mut app: App) -> Result<()> {
                 break;
             }
         }
+
+        // Auto-load task details when selection changes
+        app.auto_load_selected_task().await?;
 
         if event_handler.should_quit() {
             break;
