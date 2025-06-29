@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
 };
 
 pub struct SearchBar {
@@ -63,6 +63,7 @@ impl SearchBar {
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
 
         let search_text = if self.query.is_empty() {

@@ -11,7 +11,7 @@ use crate::domain::{Comment, Task, TaskId};
 use ratatui::{
     prelude::*,
     widgets::{
-        Block, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
+        Block, BorderType, Borders, Cell, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState,
         Table, TableState, Wrap,
     },
 };
@@ -742,6 +742,7 @@ impl App {
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
 
         if self.is_loading {
@@ -947,6 +948,7 @@ impl App {
         let border = Block::default()
             .title(format!("Task Detail - {}", task.id))
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(border, popup_area);
     }
@@ -985,6 +987,7 @@ impl App {
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
 
         let inner_area = block.inner(area);
@@ -1085,6 +1088,7 @@ impl App {
         let block = Block::default()
             .title(title)
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
 
         let inner_area = block.inner(area);
