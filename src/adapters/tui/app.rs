@@ -58,6 +58,19 @@ pub struct App {
 }
 
 impl App {
+    /// Handle character input with search priority
+    /// If search is focused, the character goes to search. Otherwise, return true to indicate action should be executed.
+    fn handle_char_with_search_priority(&mut self, c: char) -> bool {
+        if self.focused_widget == FocusedWidget::Search {
+            self.search_bar.insert_char(c);
+            self.search_query = self.search_bar.query().to_string();
+            self.update_filtered_tasks();
+            false // Search handled the character
+        } else {
+            true // Execute the action instead
+        }
+    }
+
     /// Convert HTML description to markdown for better TUI rendering
     fn html_to_markdown(html: &str) -> String {
         if html.trim().is_empty() {
@@ -372,6 +385,43 @@ impl App {
                                 _ => {
                                     if self.focused_widget == FocusedWidget::TaskList && !self.filtered_tasks.is_empty() {
                                         self.task_list_state.select(Some(self.filtered_tasks.len() - 1));
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    'r' => {
+                        if self.handle_char_with_search_priority(c) {
+                            // Refresh when not in search
+                            self.load_tasks().await?;
+                        }
+                    }
+                    'c' => {
+                        if self.handle_char_with_search_priority(c) {
+                            // Start comment when not in search
+                            // TODO: Implement comment functionality when needed
+                        }
+                    }
+                    '?' => {
+                        if self.handle_char_with_search_priority(c) {
+                            // Show help when not in search
+                            self.mode = AppMode::Help;
+                        }
+                    }
+                    ' ' => {
+                        if self.handle_char_with_search_priority(c) {
+                            // Toggle task completion when not in search
+                            if self.focused_widget == FocusedWidget::TaskList {
+                                if let Some(selected) = self.task_list_state.selected() {
+                                    if let Some(task) = self.filtered_tasks.get(selected) {
+                                        match self.state_manager.toggle_task_completion(&task.id).await {
+                                            Ok(_) => {
+                                                self.load_tasks().await?;
+                                            }
+                                            Err(e) => {
+                                                self.error_message = Some(format!("Failed to toggle task: {}", e));
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -764,12 +814,21 @@ impl App {
         // Calculate layout for different sections
         let has_description = task.description.as_ref().map_or(false, |d| !d.trim().is_empty());
         
+        // Calculate how much space the description actually needs
+        let description_lines = if has_description {
+            let markdown_desc = Self::html_to_markdown(task.description.as_ref().unwrap());
+            let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+            styled_lines.len() as u16 + 2 // +2 for title block and blank line
+        } else {
+            0
+        };
+        
         let constraints = if has_description {
             vec![
-                Constraint::Length(4),  // Task info (status, due date, assignee)
-                Constraint::Min(5),     // Description (markdown)
-                Constraint::Length(1),  // Separator
-                Constraint::Min(3),     // Comments/activity
+                Constraint::Length(4),                     // Task info (status, due date, assignee)
+                Constraint::Length(description_lines.min(15)), // Description (actual size, max 15 lines)
+                Constraint::Length(1),                     // Separator
+                Constraint::Min(3),                        // Comments/activity (takes remaining space)
             ]
         } else {
             vec![
@@ -862,12 +921,13 @@ impl App {
                 // Add blank line after Description header
                 styled_lines.insert(0, Line::from(""));
                 
+                // Prepend "Description:" as the first line instead of using a block
+                styled_lines.insert(0, Line::from(vec![
+                    Span::styled("Description:", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD))
+                ]));
+                
                 let paragraph = Paragraph::new(styled_lines)
-                    .wrap(Wrap { trim: true })
-                    .block(Block::default()
-                        .title("Description")
-                        .title_style(Style::default().fg(Color::Cyan))
-                        .borders(Borders::NONE));
+                    .wrap(Wrap { trim: true });
                 
                 frame.render_widget(paragraph, area);
             }

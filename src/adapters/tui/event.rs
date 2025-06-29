@@ -94,17 +94,9 @@ impl EventHandler {
                 ..
             } => AppEvent::Character('q'),
             
-            KeyEvent {
-                code: KeyCode::Char('r'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => AppEvent::Refresh,
+            // 'r' is handled in Character processing to allow search input
             
-            KeyEvent {
-                code: KeyCode::Char('?'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => AppEvent::ShowHelp,
+            // '?' is handled in Character processing to allow search input
             
             KeyEvent {
                 code: KeyCode::Char('/'),
@@ -175,12 +167,7 @@ impl EventHandler {
                 ..
             } => AppEvent::Character('G'),
             
-            // Task actions
-            KeyEvent {
-                code: KeyCode::Char(' '),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => AppEvent::ToggleTaskComplete,
+            // ' ' (space) is handled in Character processing to allow search input
             
             // Detail view navigation
             KeyEvent {
@@ -203,12 +190,7 @@ impl EventHandler {
                 ..
             } => AppEvent::ScrollDetailPageDown,
             
-            // Comments
-            KeyEvent {
-                code: KeyCode::Char('c'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => AppEvent::StartComment,
+            // 'c' is handled in Character processing to allow search input
             
             // Input characters
             KeyEvent {
