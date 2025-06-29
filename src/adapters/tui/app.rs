@@ -29,6 +29,12 @@ pub enum FocusedWidget {
     TaskList,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum TaskDetailPane {
+    Description,
+    Comments,
+}
+
 pub struct App {
     state_manager: Arc<StateManager>,
 
@@ -54,8 +60,13 @@ pub struct App {
     // Task detail
     current_task: Option<Task>,
     task_comments: Vec<Comment>,
-    detail_scroll_offset: u16,
+    detail_scroll_offset: u16, // Legacy - will be replaced
     detail_loading: bool,
+
+    // Task detail panes
+    focused_detail_pane: TaskDetailPane,
+    description_scroll_offset: u16,
+    comments_scroll_offset: u16,
 }
 
 impl App {
@@ -107,6 +118,11 @@ impl App {
             task_comments: Vec::new(),
             detail_scroll_offset: 0,
             detail_loading: false,
+
+            // Task detail panes
+            focused_detail_pane: TaskDetailPane::Description,
+            description_scroll_offset: 0,
+            comments_scroll_offset: 0,
         };
 
         // Select first task by default
@@ -186,6 +202,10 @@ impl App {
         self.detail_loading = true;
         self.detail_scroll_offset = 0;
 
+        // Reset scroll offsets for both description and comments panes when switching tasks
+        self.description_scroll_offset = 0;
+        self.comments_scroll_offset = 0;
+
         // Load task details and comments in parallel
         let task_future = self.state_manager.get_task(task_id);
         let comments_future = self.state_manager.get_task_comments(task_id);
@@ -213,29 +233,41 @@ impl App {
     }
 
     fn clamp_scroll_offset(&mut self) {
-        // Calculate content height for scrolling bounds
-        let mut content_lines = 0u16;
-
         if let Some(task) = &self.current_task {
-            // Task info lines
-            content_lines += 3; // Status, due date, maybe assignee
+            // Calculate content height for description pane
+            let mut description_content_lines = 0u16;
+
+            // Task info lines (status, due date, assignee)
+            description_content_lines += 3; // Status, due date, blank line
             if task.assignee.is_some() {
-                content_lines += 1;
+                description_content_lines += 1;
             }
+
+            // Description content
             if let Some(desc) = &task.description {
                 if !desc.trim().is_empty() {
-                    content_lines += 3 + desc.lines().count() as u16; // Header + lines
+                    let markdown_desc = Self::html_to_markdown(desc);
+                    let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                    description_content_lines += styled_lines.len() as u16 + 1; // +1 for header
                 }
+            } else {
+                description_content_lines += 1; // "No description available"
             }
 
-            // Separator
-            content_lines += 3;
+            // Clamp description scroll offset (assuming ~60% of screen height for description pane)
+            let description_available_height = 15u16; // Rough estimate for description pane height
+            let description_max_scroll =
+                description_content_lines.saturating_sub(description_available_height);
+            self.description_scroll_offset =
+                self.description_scroll_offset.min(description_max_scroll);
 
-            // Comments
+            // Calculate content height for comments pane
+            let mut comments_content_lines = 0u16;
+
             if self.task_comments.is_empty() {
-                content_lines += 1;
+                comments_content_lines += 1; // "No comments or activity"
             } else {
-                // Comments section header + spacing
+                // Separate comments from system activity
                 let user_comments: Vec<_> = self
                     .task_comments
                     .iter()
@@ -248,24 +280,30 @@ impl App {
                     .collect();
 
                 if !user_comments.is_empty() {
-                    content_lines += 2; // Header + spacing
+                    comments_content_lines += 2; // "Comments" header + spacing
                     for comment in &user_comments {
-                        content_lines += 2 + comment.text.lines().count() as u16;
-                        // Author line + text lines + spacing
+                        comments_content_lines += 1; // Author line
+                        comments_content_lines += comment.text.lines().count() as u16; // Text lines
+                        comments_content_lines += 1; // Spacing
                     }
                 }
 
                 if !system_activity.is_empty() {
-                    content_lines += 2; // Header + spacing
-                    content_lines += (system_activity.len() * 2) as u16; // Each activity + spacing
+                    comments_content_lines += 2; // "Activity" header + spacing
+                    for activity in &system_activity {
+                        comments_content_lines += 1; // Author line
+                        comments_content_lines += activity.text.lines().count() as u16; // Text lines
+                        comments_content_lines += 1; // Spacing
+                    }
                 }
             }
-        }
 
-        // Clamp scroll offset to valid range
-        let available_height = 20u16; // Rough estimate of scrollable area height
-        let max_scroll = content_lines.saturating_sub(available_height);
-        self.detail_scroll_offset = self.detail_scroll_offset.min(max_scroll);
+            // Clamp comments scroll offset (assuming ~40% of screen height for comments pane)
+            let comments_available_height = 10u16; // Rough estimate for comments pane height
+            let comments_max_scroll =
+                comments_content_lines.saturating_sub(comments_available_height);
+            self.comments_scroll_offset = self.comments_scroll_offset.min(comments_max_scroll);
+        }
     }
 
     pub async fn handle_event(&mut self, event: AppEvent) -> Result<bool> {
@@ -277,27 +315,53 @@ impl App {
                 self.search_bar.set_focused(true);
             }
 
-            AppEvent::Tab => match self.focused_widget {
-                FocusedWidget::Search => {
-                    self.focused_widget = FocusedWidget::TaskList;
-                    self.search_bar.set_focused(false);
+            AppEvent::Tab => {
+                match self.mode {
+                    AppMode::TaskDetail(_) => {
+                        // Switch between description and comments panes
+                        self.focused_detail_pane = match self.focused_detail_pane {
+                            TaskDetailPane::Description => TaskDetailPane::Comments,
+                            TaskDetailPane::Comments => TaskDetailPane::Description,
+                        };
+                    }
+                    _ => {
+                        // Handle normal widget focus switching
+                        match self.focused_widget {
+                            FocusedWidget::Search => {
+                                self.focused_widget = FocusedWidget::TaskList;
+                                self.search_bar.set_focused(false);
+                            }
+                            FocusedWidget::TaskList => {
+                                self.focused_widget = FocusedWidget::Search;
+                                self.search_bar.set_focused(true);
+                            }
+                        }
+                    }
                 }
-                FocusedWidget::TaskList => {
-                    self.focused_widget = FocusedWidget::Search;
-                    self.search_bar.set_focused(true);
-                }
-            },
+            }
 
             AppEvent::BackTab => {
-                // Same as Tab but in reverse - just duplicate the logic to avoid recursion
-                match self.focused_widget {
-                    FocusedWidget::Search => {
-                        self.focused_widget = FocusedWidget::TaskList;
-                        self.search_bar.set_focused(false);
+                // Same as Tab but in reverse
+                match self.mode {
+                    AppMode::TaskDetail(_) => {
+                        // Switch between description and comments panes (reverse direction)
+                        self.focused_detail_pane = match self.focused_detail_pane {
+                            TaskDetailPane::Description => TaskDetailPane::Comments,
+                            TaskDetailPane::Comments => TaskDetailPane::Description,
+                        };
                     }
-                    FocusedWidget::TaskList => {
-                        self.focused_widget = FocusedWidget::Search;
-                        self.search_bar.set_focused(true);
+                    _ => {
+                        // Handle normal widget focus switching (reverse direction)
+                        match self.focused_widget {
+                            FocusedWidget::Search => {
+                                self.focused_widget = FocusedWidget::TaskList;
+                                self.search_bar.set_focused(false);
+                            }
+                            FocusedWidget::TaskList => {
+                                self.focused_widget = FocusedWidget::Search;
+                                self.search_bar.set_focused(true);
+                            }
+                        }
                     }
                 }
             }
@@ -330,8 +394,16 @@ impl App {
                         } else {
                             match &self.mode {
                                 AppMode::TaskDetail(_) => {
-                                    self.detail_scroll_offset =
-                                        self.detail_scroll_offset.saturating_add(1);
+                                    match self.focused_detail_pane {
+                                        TaskDetailPane::Description => {
+                                            self.description_scroll_offset =
+                                                self.description_scroll_offset.saturating_add(1);
+                                        }
+                                        TaskDetailPane::Comments => {
+                                            self.comments_scroll_offset =
+                                                self.comments_scroll_offset.saturating_add(1);
+                                        }
+                                    }
                                     self.clamp_scroll_offset();
                                 }
                                 _ => {
@@ -350,8 +422,16 @@ impl App {
                         } else {
                             match &self.mode {
                                 AppMode::TaskDetail(_) => {
-                                    self.detail_scroll_offset =
-                                        self.detail_scroll_offset.saturating_sub(1);
+                                    match self.focused_detail_pane {
+                                        TaskDetailPane::Description => {
+                                            self.description_scroll_offset =
+                                                self.description_scroll_offset.saturating_sub(1);
+                                        }
+                                        TaskDetailPane::Comments => {
+                                            self.comments_scroll_offset =
+                                                self.comments_scroll_offset.saturating_sub(1);
+                                        }
+                                    }
                                     self.clamp_scroll_offset();
                                 }
                                 _ => {
@@ -483,7 +563,16 @@ impl App {
                 // Arrow keys work in both search and task list for navigation
                 match &self.mode {
                     AppMode::TaskDetail(_) => {
-                        self.detail_scroll_offset = self.detail_scroll_offset.saturating_add(1);
+                        match self.focused_detail_pane {
+                            TaskDetailPane::Description => {
+                                self.description_scroll_offset =
+                                    self.description_scroll_offset.saturating_add(1);
+                            }
+                            TaskDetailPane::Comments => {
+                                self.comments_scroll_offset =
+                                    self.comments_scroll_offset.saturating_add(1);
+                            }
+                        }
                         self.clamp_scroll_offset();
                     }
                     _ => {
@@ -501,7 +590,16 @@ impl App {
                 // Arrow keys work in both search and task list for navigation
                 match &self.mode {
                     AppMode::TaskDetail(_) => {
-                        self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(1);
+                        match self.focused_detail_pane {
+                            TaskDetailPane::Description => {
+                                self.description_scroll_offset =
+                                    self.description_scroll_offset.saturating_sub(1);
+                            }
+                            TaskDetailPane::Comments => {
+                                self.comments_scroll_offset =
+                                    self.comments_scroll_offset.saturating_sub(1);
+                            }
+                        }
                         self.clamp_scroll_offset();
                     }
                     _ => {
@@ -543,14 +641,32 @@ impl App {
 
             AppEvent::ScrollDetailPageUp => {
                 if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(10);
+                    match self.focused_detail_pane {
+                        TaskDetailPane::Description => {
+                            self.description_scroll_offset =
+                                self.description_scroll_offset.saturating_sub(10);
+                        }
+                        TaskDetailPane::Comments => {
+                            self.comments_scroll_offset =
+                                self.comments_scroll_offset.saturating_sub(10);
+                        }
+                    }
                     self.clamp_scroll_offset();
                 }
             }
 
             AppEvent::ScrollDetailPageDown => {
                 if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = self.detail_scroll_offset.saturating_add(10);
+                    match self.focused_detail_pane {
+                        TaskDetailPane::Description => {
+                            self.description_scroll_offset =
+                                self.description_scroll_offset.saturating_add(10);
+                        }
+                        TaskDetailPane::Comments => {
+                            self.comments_scroll_offset =
+                                self.comments_scroll_offset.saturating_add(10);
+                        }
+                    }
                     self.clamp_scroll_offset();
                 }
             }
@@ -773,8 +889,8 @@ impl App {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(2),    // Task title (flexible for wrapping)
-                Constraint::Min(5),    // All scrollable content
+                Constraint::Length(3), // Task title (fixed height)
+                Constraint::Min(10),   // All scrollable content (gets most space)
                 Constraint::Length(1), // Instructions
             ])
             .margin(1)
@@ -810,64 +926,251 @@ impl App {
     }
 
     fn render_scrollable_content(&self, frame: &mut Frame, area: Rect, task: &Task) {
-        // Calculate layout for different sections
-        let has_description = task
-            .description
-            .as_ref()
-            .is_some_and(|d| !d.trim().is_empty());
-
-        // Calculate how much space the description actually needs
-        let description_lines = if has_description {
-            let markdown_desc = Self::html_to_markdown(task.description.as_ref().unwrap());
-            let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
-            styled_lines.len() as u16 + 2 // +2 for title block and blank line
-        } else {
-            0
-        };
-
-        let constraints = if has_description {
-            vec![
-                Constraint::Length(4), // Task info (status, due date, assignee)
-                Constraint::Length(description_lines.min(15)), // Description (actual size, max 15 lines)
-                Constraint::Length(1),                         // Separator
-                Constraint::Min(3), // Comments/activity (takes remaining space)
-            ]
-        } else {
-            vec![
-                Constraint::Length(4), // Task info
-                Constraint::Length(1), // Separator
-                Constraint::Min(3),    // Comments/activity
-            ]
-        };
-
-        let chunks = Layout::default()
+        // Split into two panes: Description pane (top) and Comments pane (bottom)
+        let panes = Layout::default()
             .direction(Direction::Vertical)
-            .constraints(constraints)
+            .constraints([
+                Constraint::Percentage(60), // Description pane (task info + description)
+                Constraint::Percentage(40), // Comments pane
+            ])
             .split(area);
 
-        let mut chunk_idx = 0;
+        // Render description pane (top)
+        self.render_description_pane(frame, panes[0], task);
 
-        // Render task info section
-        self.render_task_info_section(frame, chunks[chunk_idx], task);
-        chunk_idx += 1;
+        // Render comments pane (bottom)
+        self.render_comments_pane(frame, panes[1]);
+    }
 
-        // Render description with markdown if present
-        if has_description {
-            self.render_description_section(frame, chunks[chunk_idx], task);
-            chunk_idx += 1;
+    fn render_description_pane(&self, frame: &mut Frame, area: Rect, task: &Task) {
+        // Create border with focus indicator
+        let border_style = if self.focused_detail_pane == TaskDetailPane::Description {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let title = if self.focused_detail_pane == TaskDetailPane::Description {
+            "Description [FOCUSED] (Tab to switch)"
+        } else {
+            "Description (Tab to switch)"
+        };
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(border_style);
+
+        let inner_area = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Collect all content for this pane
+        let mut lines = Vec::new();
+
+        // Add task info section
+        let (status_text, status_color) = task.status_display();
+        let status_style = match status_color {
+            "red" => Style::default().fg(Color::Red),
+            "yellow" => Style::default().fg(Color::Yellow),
+            "green" => Style::default().fg(Color::Green),
+            "gray" => Style::default().fg(Color::Gray),
+            _ => Style::default(),
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", Style::default().fg(Color::Cyan)),
+            Span::styled(status_text, status_style),
+        ]));
+
+        let due_text = task.due_date_display();
+        let due_style = if task.is_overdue() {
+            Style::default().fg(Color::Red)
+        } else {
+            Style::default()
+        };
+        lines.push(Line::from(vec![
+            Span::styled("Due: ", Style::default().fg(Color::Cyan)),
+            Span::styled(due_text, due_style),
+        ]));
+
+        if task.assignee.is_some() {
+            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
+            lines.push(Line::from(vec![
+                Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
+                Span::raw(assignee_display.to_string()),
+            ]));
         }
 
-        // Render separator - use actual area width
-        let separator_width = chunks[chunk_idx].width.saturating_sub(2) as usize; // Account for padding
-        let separator = Paragraph::new(Line::from(vec![Span::styled(
-            "─".repeat(separator_width),
-            Style::default().fg(Color::DarkGray),
-        )]));
-        frame.render_widget(separator, chunks[chunk_idx]);
-        chunk_idx += 1;
+        // Add blank line separator
+        lines.push(Line::from(""));
 
-        // Render comments/activity section
-        self.render_comments_section(frame, chunks[chunk_idx]);
+        // Add description if present
+        if let Some(description) = &task.description {
+            if !description.trim().is_empty() {
+                let markdown_desc = Self::html_to_markdown(description);
+                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+
+                // Add description header
+                styled_lines.insert(
+                    0,
+                    Line::from(vec![Span::styled(
+                        "Description:",
+                        Style::default()
+                            .fg(Color::Cyan)
+                            .add_modifier(Modifier::BOLD),
+                    )]),
+                );
+
+                lines.extend(styled_lines);
+            }
+        } else {
+            lines.push(Line::from(vec![Span::styled(
+                "No description available",
+                Style::default().fg(Color::Gray),
+            )]));
+        }
+
+        // Apply scrolling - skip lines based on scroll offset
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(self.description_scroll_offset as usize)
+            .collect();
+
+        let paragraph = Paragraph::new(visible_lines)
+            .wrap(Wrap { trim: true })
+            .alignment(ratatui::layout::Alignment::Left);
+        frame.render_widget(paragraph, inner_area);
+    }
+
+    fn render_comments_pane(&self, frame: &mut Frame, area: Rect) {
+        // Create border with focus indicator
+        let border_style = if self.focused_detail_pane == TaskDetailPane::Comments {
+            Style::default().fg(Color::Cyan)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let title = if self.focused_detail_pane == TaskDetailPane::Comments {
+            "Comments & Activity [FOCUSED] (Tab to switch)"
+        } else {
+            "Comments & Activity (Tab to switch)"
+        };
+
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_style(border_style);
+
+        let inner_area = block.inner(area);
+        frame.render_widget(block, area);
+
+        // Collect all comments content
+        let mut lines = Vec::new();
+
+        // Comments and activity
+        if self.task_comments.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "No comments or activity",
+                Style::default().fg(Color::Gray),
+            )]));
+        } else {
+            // Separate comments from system activity
+            let mut user_comments = Vec::new();
+            let mut system_activity = Vec::new();
+
+            for comment in &self.task_comments {
+                match comment.story_type.as_deref() {
+                    Some("comment") => user_comments.push(comment),
+                    Some("system") => system_activity.push(comment),
+                    _ => system_activity.push(comment), // Default to system if unclear
+                }
+            }
+
+            // Render user comments first
+            if !user_comments.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Comments",
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(""));
+
+                for comment in &user_comments {
+                    let author_name = comment
+                        .author
+                        .as_ref()
+                        .map(|u| u.name.as_str())
+                        .unwrap_or("Unknown");
+                    let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
+
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::styled(
+                            author_name,
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({})", time_display),
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ]));
+
+                    let cleaned_text = Self::html_to_markdown(&comment.text);
+                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    lines.push(Line::from(""));
+                }
+            }
+
+            // Render system activity
+            if !system_activity.is_empty() {
+                lines.push(Line::from(vec![Span::styled(
+                    "Activity",
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )]));
+                lines.push(Line::from(""));
+
+                for activity in &system_activity {
+                    let author_name = activity
+                        .author
+                        .as_ref()
+                        .map(|u| u.name.as_str())
+                        .unwrap_or("Unknown");
+                    let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
+
+                    lines.push(Line::from(vec![
+                        Span::styled("• ", Style::default().fg(Color::Blue)),
+                        Span::styled(
+                            author_name,
+                            Style::default()
+                                .fg(Color::Blue)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(
+                            format!(" ({})", time_display),
+                            Style::default().fg(Color::Gray),
+                        ),
+                    ]));
+
+                    let cleaned_text = Self::html_to_markdown(&activity.text);
+                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    lines.push(Line::from(""));
+                }
+            }
+        }
+
+        // Apply scrolling - skip lines based on scroll offset
+        let visible_lines: Vec<Line> = lines
+            .into_iter()
+            .skip(self.comments_scroll_offset as usize)
+            .collect();
+
+        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, inner_area);
     }
 
     fn render_task_info_section(&self, frame: &mut Frame, area: Rect, task: &Task) {
@@ -920,9 +1223,6 @@ impl App {
 
                 // Parse and render markdown with custom styling
                 let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
-
-                // Add blank line after Description header
-                styled_lines.insert(0, Line::from(""));
 
                 // Prepend "Description:" as the first line instead of using a block
                 styled_lines.insert(
