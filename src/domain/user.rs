@@ -29,14 +29,3 @@ pub struct User {
     pub email: String,
     pub photo: Option<String>,
 }
-
-impl User {
-    /// Get initials for display (e.g., "John Doe" -> "JD")
-    pub fn initials(&self) -> String {
-        self.name
-            .split_whitespace()
-            .map(|word| word.chars().next().unwrap_or(' '))
-            .collect::<String>()
-            .to_uppercase()
-    }
-}

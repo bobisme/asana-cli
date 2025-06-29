@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use crate::domain::{Task, TaskId, TaskFilter, TaskUpdate, Comment, CommentId, Project, Workspace, User};
+use crate::domain::{Task, TaskId, TaskFilter, TaskUpdate, Comment, Project, Workspace, User};
 use thiserror::Error;
 
 #[derive(Error, Debug)]

@@ -75,14 +75,6 @@ impl FileConfigStore {
         
         Ok(())
     }
-
-    async fn clear_token_from_file(&self) -> ConfigResult<()> {
-        let token_path = self.token_file_path();
-        match fs::remove_file(&token_path).await {
-            Ok(()) => Ok(()),
-            Err(_) => Ok(()), // File doesn't exist, already cleared
-        }
-    }
 }
 
 #[async_trait]
@@ -184,15 +176,5 @@ impl ConfigStore for FileConfigStore {
 
         // Fall back to file storage
         self.set_token_in_file(token).await
-    }
-
-    async fn clear_api_token(&self) -> ConfigResult<()> {
-        // Try to clear from keyring
-        if let Ok(entry) = keyring::Entry::new(&self.keyring_service, "api_token") {
-            let _ = entry.delete_password(); // Ignore errors
-        }
-
-        // Clear from file as well
-        self.clear_token_from_file().await
     }
 }

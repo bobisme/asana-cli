@@ -2,27 +2,22 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use chrono::{DateTime, Utc};
 use crate::domain::*;
-use crate::ports::{TaskRepository, ProjectRepository, WorkspaceRepository, ConfigStore, Cache};
-use crate::adapters::cache::MokaCacheAdapter;
+use crate::ports::{WorkspaceRepository, ConfigStore};
 use super::{TaskService, AppError, AppResult};
 
 #[derive(Debug, Clone)]
 pub struct CachedList<T> {
     pub items: Vec<T>,
     pub fetched_at: DateTime<Utc>,
-    pub filter_key: String,
 }
 
 pub struct StateManager {
     task_service: Arc<TaskService>,
-    project_repo: Arc<dyn ProjectRepository>,
     workspace_repo: Arc<dyn WorkspaceRepository>,
     config_store: Arc<dyn ConfigStore>,
     
     // List caches
     task_list_cache: DashMap<String, CachedList<Task>>,
-    project_cache: Arc<dyn Cache<WorkspaceId, Vec<Project>>>,
-    workspace_cache: Arc<dyn Cache<String, Vec<Workspace>>>,
     
     // Application state
     current_workspace: tokio::sync::RwLock<Option<WorkspaceId>>,
@@ -32,18 +27,14 @@ pub struct StateManager {
 impl StateManager {
     pub fn new(
         task_service: Arc<TaskService>,
-        project_repo: Arc<dyn ProjectRepository>,
         workspace_repo: Arc<dyn WorkspaceRepository>,
         config_store: Arc<dyn ConfigStore>,
     ) -> Self {
         Self {
             task_service,
-            project_repo,
             workspace_repo,
             config_store,
             task_list_cache: DashMap::new(),
-            project_cache: Arc::new(MokaCacheAdapter::with_default_settings()),
-            workspace_cache: Arc::new(MokaCacheAdapter::with_default_settings()),
             current_workspace: tokio::sync::RwLock::new(None),
             current_user: tokio::sync::RwLock::new(None),
         }
@@ -115,19 +106,6 @@ impl StateManager {
         self.current_workspace.read().await.clone()
     }
 
-    pub async fn set_current_workspace(&self, workspace_id: WorkspaceId) -> AppResult<()> {
-        *self.current_workspace.write().await = Some(workspace_id.clone());
-        
-        // Update config
-        let mut config = self.config_store.load_config().await?;
-        config.default_workspace = Some(workspace_id);
-        self.config_store.save_config(&config).await?;
-        
-        // Clear task list cache since workspace changed
-        self.task_list_cache.clear();
-        
-        Ok(())
-    }
 
     pub async fn get_current_user(&self) -> Option<User> {
         self.current_user.read().await.clone()
@@ -182,17 +160,12 @@ impl StateManager {
             CachedList {
                 items: sorted_tasks.clone(),
                 fetched_at: Utc::now(),
-                filter_key: cache_key,
             },
         );
 
         Ok(sorted_tasks)
     }
 
-    pub async fn search_tasks(&self, query: &str) -> AppResult<Vec<Task>> {
-        let workspace = self.get_current_workspace().await;
-        self.task_service.search_tasks(query, workspace.as_ref()).await
-    }
 
     pub async fn get_task(&self, id: &TaskId) -> AppResult<Task> {
         self.task_service.get_task(id, true).await
@@ -211,51 +184,7 @@ impl StateManager {
         self.task_service.get_task_comments(task_id, true).await
     }
 
-    pub async fn create_comment(&self, task_id: &TaskId, content: &str) -> AppResult<Comment> {
-        self.task_service.create_comment(task_id, content).await
-    }
 
-    pub async fn get_workspaces(&self, use_cache: bool) -> AppResult<Vec<Workspace>> {
-        let cache_key = "all_workspaces".to_string();
-        
-        if use_cache {
-            if let Some(workspaces) = self.workspace_cache.get(&cache_key).await {
-                return Ok(workspaces);
-            }
-        }
 
-        let workspaces = self.workspace_repo.list_workspaces().await?;
-        self.workspace_cache.insert(cache_key, workspaces.clone()).await;
-        Ok(workspaces)
-    }
 
-    pub async fn get_projects(&self, workspace_id: Option<&WorkspaceId>, use_cache: bool) -> AppResult<Vec<Project>> {
-        let cache_key = workspace_id.cloned().unwrap_or_else(|| WorkspaceId("all".to_string()));
-        
-        if use_cache {
-            if let Some(projects) = self.project_cache.get(&cache_key).await {
-                return Ok(projects);
-            }
-        }
-
-        let projects = self.project_repo.list_projects(workspace_id).await?;
-        self.project_cache.insert(cache_key, projects.clone()).await;
-        Ok(projects)
-    }
-
-    pub async fn refresh_all_caches(&self) -> AppResult<()> {
-        // Clear all caches
-        self.task_list_cache.clear();
-        self.project_cache.clear().await;
-        self.workspace_cache.clear().await;
-        
-        // Reload current workspace tasks
-        self.get_tasks_for_current_workspace(false).await?;
-        
-        Ok(())
-    }
-
-    pub fn invalidate_task_lists(&self) {
-        self.task_list_cache.clear();
-    }
 }

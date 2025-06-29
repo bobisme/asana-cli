@@ -18,7 +18,6 @@ pub enum AppMode {
     TaskList,
     TaskDetail(TaskId),
     Help,
-    CommentInput(TaskId),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -48,7 +47,6 @@ pub struct App {
     error_message: Option<String>,
     
     // Comment input
-    comment_input: String,
     
     // Task detail
     current_task: Option<Task>,
@@ -102,7 +100,6 @@ impl App {
             filtered_tasks: Vec::new(),
             is_loading: false,
             error_message: None,
-            comment_input: String::new(),
             current_task: None,
             task_comments: Vec::new(),
             detail_scroll_offset: 0,
@@ -138,7 +135,7 @@ impl App {
                 }
             }
             Err(e) => {
-                self.error_message = Some(format!("Failed to load tasks: {}", e));
+                self.error_message = Some(format!("Failed to load tasks: {e}"));
             }
         }
         
@@ -155,7 +152,7 @@ impl App {
                 .iter()
                 .filter(|task| {
                     task.name.to_lowercase().contains(&query_lower) ||
-                    task.description.as_ref().map_or(false, |desc| desc.to_lowercase().contains(&query_lower))
+                    task.description.as_ref().is_some_and(|desc| desc.to_lowercase().contains(&query_lower))
                 })
                 .cloned()
                 .collect();
@@ -187,7 +184,7 @@ impl App {
         match task_result {
             Ok(task) => self.current_task = Some(task),
             Err(e) => {
-                self.error_message = Some(format!("Failed to load task: {}", e));
+                self.error_message = Some(format!("Failed to load task: {e}"));
                 self.current_task = None;
             }
         }
@@ -195,7 +192,7 @@ impl App {
         match comments_result {
             Ok(comments) => self.task_comments = comments,
             Err(e) => {
-                self.error_message = Some(format!("Failed to load comments: {}", e));
+                self.error_message = Some(format!("Failed to load comments: {e}"));
                 self.task_comments = Vec::new();
             }
         }
@@ -258,10 +255,6 @@ impl App {
     pub async fn handle_event(&mut self, event: AppEvent) -> Result<bool> {
         match event {
             AppEvent::Quit => return Ok(true),
-            
-            AppEvent::Refresh => {
-                self.load_tasks().await?;
-            }
             
             AppEvent::FocusSearch => {
                 self.focused_widget = FocusedWidget::Search;
@@ -419,7 +412,7 @@ impl App {
                                                 self.load_tasks().await?;
                                             }
                                             Err(e) => {
-                                                self.error_message = Some(format!("Failed to toggle task: {}", e));
+                                                self.error_message = Some(format!("Failed to toggle task: {e}"));
                                             }
                                         }
                                     }
@@ -446,7 +439,7 @@ impl App {
                 }
             }
             
-            AppEvent::CloseModal | AppEvent::ClearSearch => {
+            AppEvent::CloseModal => {
                 if self.focused_widget == FocusedWidget::Search {
                     // Esc from search: clear search and focus task list
                     self.search_bar.clear();
@@ -494,7 +487,7 @@ impl App {
                 }
             }
             
-            AppEvent::Enter | AppEvent::SelectTask => {
+            AppEvent::Enter => {
                 if self.focused_widget == FocusedWidget::Search {
                     // Enter from search: switch to task list and select highlighted task
                     self.focused_widget = FocusedWidget::TaskList;
@@ -520,42 +513,6 @@ impl App {
                 }
             }
             
-            AppEvent::ToggleTaskComplete => {
-                if self.focused_widget == FocusedWidget::TaskList {
-                    if let Some(selected) = self.task_list_state.selected() {
-                        if let Some(task) = self.filtered_tasks.get(selected) {
-                            match self.state_manager.toggle_task_completion(&task.id).await {
-                                Ok(_) => {
-                                    self.load_tasks().await?;
-                                }
-                                Err(e) => {
-                                    self.error_message = Some(format!("Failed to toggle task: {}", e));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            AppEvent::ShowHelp => {
-                self.mode = AppMode::Help;
-            }
-            
-            // Task detail scroll events
-            AppEvent::ScrollDetailUp => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(1);
-                    self.clamp_scroll_offset();
-                }
-            }
-            
-            AppEvent::ScrollDetailDown => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = self.detail_scroll_offset.saturating_add(1);
-                    self.clamp_scroll_offset();
-                }
-            }
-            
             AppEvent::ScrollDetailPageUp => {
                 if matches!(self.mode, AppMode::TaskDetail(_)) {
                     self.detail_scroll_offset = self.detail_scroll_offset.saturating_sub(10);
@@ -570,21 +527,6 @@ impl App {
                 }
             }
             
-            AppEvent::ScrollDetailToTop => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = 0;
-                    self.clamp_scroll_offset();
-                }
-            }
-            
-            AppEvent::ScrollDetailToBottom => {
-                if matches!(self.mode, AppMode::TaskDetail(_)) {
-                    self.detail_scroll_offset = u16::MAX;
-                    self.clamp_scroll_offset();
-                }
-            }
-            
-            _ => {} // Handle other events as needed
         }
         
         Ok(false)
@@ -646,7 +588,8 @@ impl App {
     }
 
     fn render_task_list(&mut self, frame: &mut Frame, area: Rect) {
-        let title = format!("Tasks ({})", self.filtered_tasks.len());
+        let len = self.filtered_tasks.len();
+        let title = format!("Tasks ({len})");
         let border_style = if self.focused_widget == FocusedWidget::TaskList {
             Style::default().fg(Color::Yellow)
         } else {
@@ -826,7 +769,7 @@ impl App {
         
         // Render border with title including task ID
         let border = Block::default()
-            .title(format!("Task Detail - {}", task.id.0))
+            .title(format!("Task Detail - {}", task.id))
             .borders(Borders::ALL)
             .border_style(Style::default().fg(Color::Yellow));
         frame.render_widget(border, popup_area);
@@ -834,7 +777,7 @@ impl App {
     
     fn render_scrollable_content(&self, frame: &mut Frame, area: Rect, task: &Task) {
         // Calculate layout for different sections
-        let has_description = task.description.as_ref().map_or(false, |d| !d.trim().is_empty());
+        let has_description = task.description.as_ref().is_some_and(|d| !d.trim().is_empty());
         
         // Calculate how much space the description actually needs
         let description_lines = if has_description {
@@ -969,23 +912,20 @@ impl App {
             }
             
             // Handle headers
-            if trimmed.starts_with("# ") {
-                let text = &trimmed[2..];
+            if let Some(text) = trimmed.strip_prefix("# ") {
                 lines.push(Line::from(vec![
                     Span::styled(text.to_string(), Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD))
                 ]));
                 lines.push(Line::from(""));
-            } else if trimmed.starts_with("## ") {
-                let text = &trimmed[3..];
+            } else if let Some(text) = trimmed.strip_prefix("## ") {
                 lines.push(Line::from(vec![
                     Span::styled(text.to_string(), Style::default()
                         .fg(Color::Blue)
                         .add_modifier(Modifier::BOLD))
                 ]));
-            } else if trimmed.starts_with("### ") {
-                let text = &trimmed[4..];
+            } else if let Some(text) = trimmed.strip_prefix("### ") {
                 lines.push(Line::from(vec![
                     Span::styled(text.to_string(), Style::default()
                         .fg(Color::Cyan)
@@ -1001,12 +941,12 @@ impl App {
                 ]));
             }
             // Handle numbered lists
-            else if trimmed.chars().next().map_or(false, |c| c.is_ascii_digit()) && trimmed.contains(". ") {
+            else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) && trimmed.contains(". ") {
                 if let Some(dot_pos) = trimmed.find(". ") {
                     let number = &trimmed[..dot_pos + 1];
                     let text = &trimmed[dot_pos + 2..];
                     lines.push(Line::from(vec![
-                        Span::styled(format!("{} ", number), Style::default().fg(Color::Magenta)),
+                        Span::styled(format!("{number} "), Style::default().fg(Color::Magenta)),
                         Span::raw(text.to_string()),
                     ]));
                 } else {
@@ -1197,7 +1137,7 @@ impl App {
                     let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
                     
                     lines.push(Line::from(vec![
-                        Span::styled(format!("{} • ", author_name), Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
+                        Span::styled(format!("{author_name} • "), Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
                         Span::styled(time_display, Style::default().fg(Color::Gray)),
                     ]));
                     
@@ -1226,170 +1166,15 @@ impl App {
                     };
                     
                     lines.push(Line::from(vec![
-                        Span::styled(format!("{} ", icon), Style::default().fg(Color::Yellow)),
+                        Span::styled(format!("{icon} "), Style::default().fg(Color::Yellow)),
                         Span::raw(activity.text.clone()),
-                        Span::styled(format!(" ({})", time_display), Style::default().fg(Color::Gray)),
+                        Span::styled(format!(" ({time_display})"), Style::default().fg(Color::Gray)),
                     ]));
                 }
             }
         }
         
         // Calculate scrolling with proper clamping
-        let content_height = lines.len() as u16;
-        let max_scroll = content_height.saturating_sub(area.height);
-        let scroll_offset = self.detail_scroll_offset.min(max_scroll);
-        
-        let paragraph = Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
-            .scroll((scroll_offset, 0));
-        
-        frame.render_widget(paragraph, area);
-        
-        // Render scrollbar if content is longer than area
-        if content_height > area.height {
-            let scrollbar = Scrollbar::default()
-                .orientation(ScrollbarOrientation::VerticalRight)
-                .begin_symbol(Some("↑"))
-                .end_symbol(Some("↓"));
-            
-            let mut scrollbar_state = ScrollbarState::new(content_height as usize)
-                .position(scroll_offset as usize);
-            
-            frame.render_stateful_widget(
-                scrollbar,
-                area.inner(Margin { vertical: 0, horizontal: 0 }),
-                &mut scrollbar_state,
-            );
-        }
-    }
-
-    fn render_task_info(&self, frame: &mut Frame, area: Rect, task: &Task) {
-        let mut lines = Vec::new();
-        
-        // Task name and status
-        let (status_text, status_color) = task.status_display();
-        let status_style = match status_color {
-            "red" => Style::default().fg(Color::Red),
-            "yellow" => Style::default().fg(Color::Yellow),
-            "green" => Style::default().fg(Color::Green),
-            "gray" => Style::default().fg(Color::Gray),
-            _ => Style::default(),
-        };
-        
-        lines.push(Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Cyan)),
-            Span::styled(status_text, status_style),
-        ]));
-        
-        // Due date
-        lines.push(Line::from(vec![
-            Span::styled("Due: ", Style::default().fg(Color::Cyan)),
-            Span::raw(task.due_date_display()),
-        ]));
-        
-        // Assignee
-        if task.assignee.is_some() {
-            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
-            lines.push(Line::from(vec![
-                Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
-                Span::raw(assignee_display.to_string()),
-            ]));
-        }
-        
-        // Description
-        if let Some(description) = &task.description {
-            if !description.trim().is_empty() {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled("Description:", Style::default().fg(Color::Cyan)),
-                ]));
-                let markdown_desc = Self::html_to_markdown(description);
-                for line in markdown_desc.lines() {
-                    lines.push(Line::from(line.to_string()));
-                }
-            }
-        }
-        
-        let paragraph = Paragraph::new(lines)
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
-    }
-    
-    fn render_task_comments(&self, frame: &mut Frame, area: Rect) {
-        if self.task_comments.is_empty() {
-            let paragraph = Paragraph::new("No comments or activity")
-                .style(Style::default().fg(Color::Gray));
-            frame.render_widget(paragraph, area);
-            return;
-        }
-        
-        let mut lines = Vec::new();
-        
-        // Separate comments from system activity
-        let mut user_comments = Vec::new();
-        let mut system_activity = Vec::new();
-        
-        for comment in &self.task_comments {
-            match comment.story_type.as_deref() {
-                Some("comment") => user_comments.push(comment),
-                Some("system") => system_activity.push(comment),
-                _ => system_activity.push(comment), // Default to system if unclear
-            }
-        }
-        
-        // Render user comments first
-        if !user_comments.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("💬 Comments", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(""));
-            
-            for comment in &user_comments {
-                // Author and timestamp
-                let author_name = comment.author.as_ref()
-                    .map(|u| u.name.as_str())
-                    .unwrap_or("Unknown");
-                let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
-                
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} • ", author_name), Style::default().fg(Color::Blue).add_modifier(Modifier::BOLD)),
-                    Span::styled(time_display, Style::default().fg(Color::Gray)),
-                ]));
-                
-                // Comment text with word wrapping
-                for line in comment.text.lines() {
-                    lines.push(Line::from(line));
-                }
-                lines.push(Line::from(""));
-            }
-        }
-        
-        // Render system activity
-        if !system_activity.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("📋 Activity", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
-            ]));
-            lines.push(Line::from(""));
-            
-            for activity in &system_activity {
-                let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                let icon = match activity.resource_subtype.as_deref() {
-                    Some("due_date_changed") => "📅",
-                    Some("duplicated") => "📄",
-                    Some("due_today") => "⏰",
-                    _ => "•",
-                };
-                
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{} ", icon), Style::default().fg(Color::Yellow)),
-                    Span::raw(activity.text.clone()),
-                    Span::styled(format!(" ({})", time_display), Style::default().fg(Color::Gray)),
-                ]));
-                lines.push(Line::from(""));
-            }
-        }
-        
-        // Calculate scrolling
         let content_height = lines.len() as u16;
         let max_scroll = content_height.saturating_sub(area.height);
         let scroll_offset = self.detail_scroll_offset.min(max_scroll);
@@ -1459,10 +1244,14 @@ pub async fn run_tui(mut app: App) -> Result<()> {
     loop {
         terminal.draw(|frame| app.render(frame))?;
 
-        let event = event_handler.next_event().await?;
-        let should_quit = app.handle_event(event).await?;
-
-        if should_quit || event_handler.should_quit() {
+        if let Some(event) = event_handler.next_event().await? {
+            let should_quit = app.handle_event(event).await?;
+            if should_quit {
+                break;
+            }
+        }
+        
+        if event_handler.should_quit() {
             break;
         }
     }

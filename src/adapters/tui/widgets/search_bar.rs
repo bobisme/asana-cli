@@ -22,9 +22,6 @@ impl SearchBar {
         self.is_focused = focused;
     }
 
-    pub fn is_focused(&self) -> bool {
-        self.is_focused
-    }
 
     pub fn query(&self) -> &str {
         &self.query

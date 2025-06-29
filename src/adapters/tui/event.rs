@@ -6,49 +6,25 @@ use color_eyre::Result;
 pub enum AppEvent {
     // Navigation
     Quit,
-    Refresh,
-    ShowHelp,
     CloseModal,
     
     // Search
     FocusSearch,
-    UpdateSearch(String),
-    ClearSearch,
     
     // Task list navigation
-    FocusTaskList,
     NextTask,
     PreviousTask,
-    FirstTask,
-    LastTask,
-    SelectTask,
-    ToggleTaskComplete,
     
     // Task detail
-    OpenTaskDetail(crate::domain::TaskId),
-    CloseTaskDetail,
-    ScrollDetailUp,
-    ScrollDetailDown,
     ScrollDetailPageUp,
     ScrollDetailPageDown,
-    ScrollDetailToTop,
-    ScrollDetailToBottom,
-    
-    // Comment system
-    StartComment,
-    SubmitComment(String),
-    CancelComment,
     
     // Input handling
     Character(char),
     Backspace,
-    Delete,
     Enter,
     Tab,
     BackTab,
-    
-    // Other
-    Tick,
 }
 
 pub struct EventHandler {
@@ -64,18 +40,18 @@ impl EventHandler {
         self.should_quit
     }
 
-    pub async fn next_event(&mut self) -> Result<AppEvent> {
+    pub async fn next_event(&mut self) -> Result<Option<AppEvent>> {
         if event::poll(Duration::from_millis(100))? {
             match event::read()? {
                 Event::Key(key_event) => Ok(self.handle_key_event(key_event)),
-                _ => Ok(AppEvent::Tick),
+                _ => Ok(None),
             }
         } else {
-            Ok(AppEvent::Tick)
+            Ok(None)
         }
     }
 
-    fn handle_key_event(&mut self, key_event: KeyEvent) -> AppEvent {
+    fn handle_key_event(&mut self, key_event: KeyEvent) -> Option<AppEvent> {
         match key_event {
             // Global quit with Ctrl+C
             KeyEvent {
@@ -84,7 +60,7 @@ impl EventHandler {
                 ..
             } => {
                 self.should_quit = true;
-                AppEvent::Quit
+                Some(AppEvent::Quit)
             }
             
             // 'q' for context-sensitive quit/close
@@ -92,7 +68,7 @@ impl EventHandler {
                 code: KeyCode::Char('q'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Character('q'),
+            } => Some(AppEvent::Character('q')),
             
             // 'r' is handled in Character processing to allow search input
             
@@ -102,70 +78,70 @@ impl EventHandler {
                 code: KeyCode::Char('/'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::FocusSearch,
+            } => Some(AppEvent::FocusSearch),
             
             KeyEvent {
                 code: KeyCode::Esc,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::CloseModal,
+            } => Some(AppEvent::CloseModal),
             
             // Navigation
             KeyEvent {
                 code: KeyCode::Tab,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Tab,
+            } => Some(AppEvent::Tab),
             
             KeyEvent {
                 code: KeyCode::BackTab,
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => AppEvent::BackTab,
+            } => Some(AppEvent::BackTab),
             
             KeyEvent {
                 code: KeyCode::Enter,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Enter,
+            } => Some(AppEvent::Enter),
             
             // Arrow key navigation (always works)
             KeyEvent {
                 code: KeyCode::Down,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::NextTask,
+            } => Some(AppEvent::NextTask),
             
             KeyEvent {
                 code: KeyCode::Up,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::PreviousTask,
+            } => Some(AppEvent::PreviousTask),
             
             // Vim-style navigation as characters (context-sensitive)
             KeyEvent {
                 code: KeyCode::Char('j'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Character('j'),
+            } => Some(AppEvent::Character('j')),
             
             KeyEvent {
                 code: KeyCode::Char('k'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Character('k'),
+            } => Some(AppEvent::Character('k')),
             
             KeyEvent {
                 code: KeyCode::Char('g'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Character('g'),
+            } => Some(AppEvent::Character('g')),
             
             KeyEvent {
                 code: KeyCode::Char('G'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => AppEvent::Character('G'),
+            } => Some(AppEvent::Character('G')),
             
             // ' ' (space) is handled in Character processing to allow search input
             
@@ -178,7 +154,7 @@ impl EventHandler {
                 code: KeyCode::PageUp,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::ScrollDetailPageUp,
+            } => Some(AppEvent::ScrollDetailPageUp),
             
             KeyEvent {
                 code: KeyCode::Char('d'),
@@ -188,7 +164,7 @@ impl EventHandler {
                 code: KeyCode::PageDown,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::ScrollDetailPageDown,
+            } => Some(AppEvent::ScrollDetailPageDown),
             
             // 'c' is handled in Character processing to allow search input
             
@@ -197,27 +173,21 @@ impl EventHandler {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Character(c),
+            } => Some(AppEvent::Character(c)),
             
             KeyEvent {
                 code: KeyCode::Char(c),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => AppEvent::Character(c.to_uppercase().next().unwrap_or(c)),
+            } => Some(AppEvent::Character(c.to_uppercase().next().unwrap_or(c))),
             
             KeyEvent {
                 code: KeyCode::Backspace,
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::Backspace,
+            } => Some(AppEvent::Backspace),
             
-            KeyEvent {
-                code: KeyCode::Delete,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => AppEvent::Delete,
-            
-            _ => AppEvent::Tick,
+            _ => None,
         }
     }
 }

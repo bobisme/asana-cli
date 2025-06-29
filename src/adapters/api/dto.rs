@@ -11,14 +11,9 @@ pub struct AsanaResponse<T> {
 #[derive(Debug, Deserialize)]
 pub struct AsanaListResponse<T> {
     pub data: Vec<T>,
-    pub next_page: Option<AsanaNextPage>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct AsanaNextPage {
-    pub offset: String,
-    pub path: String,
-    pub uri: String,
+    // Pagination not implemented - field kept for API compatibility
+    #[allow(dead_code)]
+    pub next_page: Option<serde_json::Value>,
 }
 
 // DTOs for API communication
@@ -171,11 +166,11 @@ impl From<ProjectDto> for Project {
             created_at: dto.created_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|| Utc::now()),
+                .unwrap_or_else(Utc::now),
             modified_at: dto.modified_at
                 .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
                 .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or_else(|| Utc::now()),
+                .unwrap_or_else(Utc::now),
         }
     }
 }

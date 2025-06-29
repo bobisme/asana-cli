@@ -23,7 +23,7 @@ impl AsanaClient {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> RepositoryResult<T> {
-        let url = format!("{}{}", ASANA_API_BASE, path);
+        let url = format!("{ASANA_API_BASE}{path}");
         
         let response = self
             .client
@@ -37,7 +37,7 @@ impl AsanaClient {
     }
 
     pub async fn get_list<T: DeserializeOwned>(&self, path: &str) -> RepositoryResult<Vec<T>> {
-        let url = format!("{}{}", ASANA_API_BASE, path);
+        let url = format!("{ASANA_API_BASE}{path}");
         
         let response = self
             .client
@@ -55,7 +55,7 @@ impl AsanaClient {
         tracing::debug!("API List Response: {}", response_text);
         
         let list_response: AsanaListResponse<T> = serde_json::from_str(&response_text)
-            .map_err(|e| RepositoryError::Serialization(format!("Failed to parse list response: {}. Response was: {}", e, response_text)))?;
+            .map_err(|e| RepositoryError::Serialization(format!("Failed to parse list response: {e}. Response was: {response_text}")))?;
         Ok(list_response.data)
     }
 
@@ -64,7 +64,7 @@ impl AsanaClient {
         path: &str,
         body: &R,
     ) -> RepositoryResult<T> {
-        let url = format!("{}{}", ASANA_API_BASE, path);
+        let url = format!("{ASANA_API_BASE}{path}");
         
         let response = self
             .client
@@ -83,7 +83,7 @@ impl AsanaClient {
         path: &str,
         body: &R,
     ) -> RepositoryResult<T> {
-        let url = format!("{}{}", ASANA_API_BASE, path);
+        let url = format!("{ASANA_API_BASE}{path}");
         
         let response = self
             .client
@@ -110,7 +110,7 @@ impl AsanaClient {
                 tracing::debug!("API Response: {}", response_text);
                 
                 let asana_response: AsanaResponse<T> = serde_json::from_str(&response_text)
-                    .map_err(|e| RepositoryError::Serialization(format!("Failed to parse response: {}. Response was: {}", e, response_text)))?;
+                    .map_err(|e| RepositoryError::Serialization(format!("Failed to parse response: {e}. Response was: {response_text}")))?;
                 Ok(asana_response.data)
             }
             401 => Err(RepositoryError::Authentication(
@@ -135,8 +135,7 @@ impl AsanaClient {
                     .await
                     .unwrap_or_else(|_| "Unknown error".to_string());
                 Err(RepositoryError::Api(format!(
-                    "HTTP {}: {}",
-                    status, error_text
+                    "HTTP {status}: {error_text}"
                 )))
             }
         }

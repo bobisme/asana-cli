@@ -4,9 +4,6 @@ use crate::domain::WorkspaceId;
 
 #[derive(Error, Debug)]
 pub enum ConfigError {
-    #[error("Configuration file not found")]
-    NotFound,
-    
     #[error("Failed to read configuration: {0}")]
     ReadError(String),
     
@@ -15,9 +12,6 @@ pub enum ConfigError {
     
     #[error("Invalid configuration format: {0}")]
     InvalidFormat(String),
-    
-    #[error("Credential storage error: {0}")]
-    CredentialError(String),
 }
 
 pub type ConfigResult<T> = Result<T, ConfigError>;
@@ -47,5 +41,4 @@ pub trait ConfigStore {
     async fn save_config(&self, config: &AppConfig) -> ConfigResult<()>;
     async fn get_api_token(&self) -> ConfigResult<Option<String>>;
     async fn set_api_token(&self, token: &str) -> ConfigResult<()>;
-    async fn clear_api_token(&self) -> ConfigResult<()>;
 }

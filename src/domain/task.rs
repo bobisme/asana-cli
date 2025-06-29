@@ -23,24 +23,6 @@ impl From<&str> for TaskId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Priority {
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-impl Priority {
-    pub fn color(&self) -> &'static str {
-        match self {
-            Priority::Low => "gray",
-            Priority::Medium => "blue",
-            Priority::High => "yellow",
-            Priority::Critical => "red",
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Task {
@@ -66,21 +48,6 @@ impl Task {
             .unwrap_or(false)
     }
     
-    /// Business rule: calculate task priority based on due date and status
-    pub fn priority(&self) -> Priority {
-        if self.completed {
-            return Priority::Low;
-        }
-        
-        match self.due_date {
-            None => Priority::Low,
-            Some(_due) if self.is_overdue() => Priority::Critical,
-            Some(due) if due.date_naive() == Utc::now().date_naive() => Priority::High,
-            Some(due) if (due - Utc::now()).num_days() <= 3 => Priority::Medium,
-            _ => Priority::Low,
-        }
-    }
-    
     /// Business rule: get display status with color
     pub fn status_display(&self) -> (&'static str, &'static str) {
         if self.completed {
@@ -102,8 +69,11 @@ impl Task {
                     0 => "Today".to_string(),
                     1 => "Tomorrow".to_string(),
                     -1 => "Yesterday".to_string(),
-                    d if d < 0 => format!("{} days ago", -d),
-                    d if d <= 7 => format!("In {} days", d),
+                    d if d < 0 => {
+                        let days = -d;
+                        format!("{days} days ago")
+                    }
+                    d if d <= 7 => format!("In {d} days"),
                     _ => due.format("%Y-%m-%d").to_string(),
                 }
             }

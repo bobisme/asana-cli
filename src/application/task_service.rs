@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::domain::*;
 use crate::ports::{TaskRepository, Cache};
-use super::{AppError, AppResult};
+use super::AppResult;
 
 pub struct TaskService {
     repository: Arc<dyn TaskRepository>,
@@ -34,7 +34,7 @@ impl TaskService {
         Ok(task)
     }
 
-    pub async fn list_tasks(&self, filter: &TaskFilter, use_cache: bool) -> AppResult<Vec<Task>> {
+    pub async fn list_tasks(&self, filter: &TaskFilter, _use_cache: bool) -> AppResult<Vec<Task>> {
         // For list operations, we don't cache the entire list but we do cache individual tasks
         let tasks = self.repository.list_tasks(filter).await?;
         
@@ -85,23 +85,5 @@ impl TaskService {
         self.comment_cache.remove(task_id).await;
         
         Ok(comment)
-    }
-
-    pub async fn refresh_task(&self, id: &TaskId) -> AppResult<Task> {
-        // Force refresh by removing from cache first
-        self.cache.remove(id).await;
-        self.get_task(id, false).await
-    }
-
-    pub async fn search_tasks(&self, query: &str, workspace: Option<&WorkspaceId>) -> AppResult<Vec<Task>> {
-        let filter = TaskFilter {
-            workspace: workspace.cloned(),
-            search_query: Some(query.to_string()),
-            completed: Some(false), // Only search incomplete tasks
-            limit: Some(100), // Increase limit for search
-            ..Default::default()
-        };
-
-        self.list_tasks(&filter, false).await
     }
 }

@@ -83,7 +83,7 @@ impl TaskRepository for AsanaTaskRepository {
     async fn list_tasks(&self, filter: &TaskFilter) -> RepositoryResult<Vec<Task>> {
         let params = self.build_task_query_params(filter);
         let query_string = self.build_query_string(&params);
-        let path = format!("/tasks{}", query_string);
+        let path = format!("/tasks{query_string}");
         
         let task_dtos: Vec<TaskDto> = self.client.get_list(&path).await?;
         Ok(task_dtos.into_iter().map(|dto| dto.into()).collect())
@@ -146,14 +146,14 @@ impl WorkspaceRepository for AsanaTaskRepository {
     async fn list_workspaces(&self) -> RepositoryResult<Vec<Workspace>> {
         let path = "/workspaces?opt_fields=gid,name,is_organization";
         
-        let workspace_dtos: Vec<WorkspaceDto> = self.client.get(&path).await?;
+        let workspace_dtos: Vec<WorkspaceDto> = self.client.get(path).await?;
         Ok(workspace_dtos.into_iter().map(|dto| dto.into()).collect())
     }
 
     async fn get_current_user(&self) -> RepositoryResult<User> {
         let path = "/users/me?opt_fields=gid,name,email,photo.image_60x60";
         
-        let user_dto: UserDto = self.client.get(&path).await?;
+        let user_dto: UserDto = self.client.get(path).await?;
         Ok(user_dto.into())
     }
 }

@@ -1,12 +1,8 @@
 use thiserror::Error;
-use crate::domain::DomainError;
 use crate::ports::{RepositoryError, ConfigError};
 
 #[derive(Error, Debug)]
 pub enum AppError {
-    #[error("Domain error: {0}")]
-    Domain(#[from] DomainError),
-    
     #[error("Repository error: {0}")]
     Repository(#[from] RepositoryError),
     

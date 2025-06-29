@@ -135,7 +135,6 @@ async fn main() -> Result<()> {
     let state_manager = Arc::new(StateManager::new(
         task_service,
         task_repo.clone(),
-        task_repo.clone(),
         config_store,
     ));
 
@@ -151,10 +150,10 @@ async fn main() -> Result<()> {
                     match state_manager.get_tasks_for_current_workspace(false).await {
                         Ok(tasks) => {
                             let json = serde_json::to_string_pretty(&tasks)?;
-                            println!("{}", json);
+                            println!("{json}");
                         }
                         Err(e) => {
-                            eprintln!("❌ Failed to list tasks: {}", e);
+                            eprintln!("❌ Failed to list tasks: {e}");
                             std::process::exit(1);
                         }
                     }
@@ -165,10 +164,10 @@ async fn main() -> Result<()> {
                         match state_manager.get_task_comments(&task_id.as_str().into()).await {
                             Ok(comments) => {
                                 let json = serde_json::to_string_pretty(&comments)?;
-                                println!("{}", json);
+                                println!("{json}");
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to list stories: {}", e);
+                                eprintln!("❌ Failed to list stories: {e}");
                                 std::process::exit(1);
                             }
                         }
@@ -188,10 +187,10 @@ async fn main() -> Result<()> {
                         match state_manager.get_task_comments(&task_id.as_str().into()).await {
                             Ok(comments) => {
                                 let json = serde_json::to_string_pretty(&comments)?;
-                                println!("{}", json);
+                                println!("{json}");
                             }
                             Err(e) => {
-                                eprintln!("❌ Failed to list stories: {}", e);
+                                eprintln!("❌ Failed to list stories: {e}");
                                 std::process::exit(1);
                             }
                         }
@@ -210,7 +209,7 @@ async fn main() -> Result<()> {
             if let Err(e) = run_tui(app).await {
                 match &e.downcast_ref::<AppError>() {
                     Some(AppError::Application(msg)) => {
-                        eprintln!("❌ {}", msg);
+                        eprintln!("❌ {msg}");
                         eprintln!();
                         eprintln!("💡 Tip: Use 'cargo run -- --help' for more options");
                     }
@@ -219,7 +218,7 @@ async fn main() -> Result<()> {
                         eprintln!("❌ Authentication required");
                     }
                     _ => {
-                        eprintln!("❌ Application error: {}", e);
+                        eprintln!("❌ Application error: {e}");
                     }
                 }
                 std::process::exit(1);

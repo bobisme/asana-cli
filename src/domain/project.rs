@@ -34,9 +34,3 @@ pub struct Project {
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }
-
-impl Project {
-    pub fn is_active(&self) -> bool {
-        !self.archived
-    }
-}
