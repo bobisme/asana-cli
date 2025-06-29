@@ -80,8 +80,11 @@ pub struct TagDto {
 pub struct CommentDto {
     pub gid: String,
     pub text: String,
-    pub author: UserDto,
+    pub created_by: Option<UserDto>,
     pub created_at: String,
+    #[serde(rename = "type")]
+    pub story_type: Option<String>,
+    pub resource_subtype: Option<String>,
 }
 
 // Request DTOs
@@ -190,11 +193,13 @@ impl From<CommentDto> for Comment {
         Self {
             id: CommentId(dto.gid),
             text: dto.text,
-            author: dto.author.into(),
+            author: dto.created_by.map(|author| author.into()),
             created_at: DateTime::parse_from_rfc3339(&dto.created_at)
                 .map(|dt| dt.with_timezone(&Utc))
                 .unwrap_or_else(|_| Utc::now()),
             task_id: TaskId("unknown".to_string()), // Will be set by caller
+            story_type: dto.story_type,
+            resource_subtype: dto.resource_subtype,
         }
     }
 }

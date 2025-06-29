@@ -58,6 +58,32 @@ async fn main() -> Result<()> {
                     Command::new("list")
                         .about("List tasks as JSON")
                 )
+                .subcommand(
+                    Command::new("stories")
+                        .about("List stories/comments for a task")
+                        .arg(
+                            Arg::new("task_id")
+                                .help("Task ID to fetch stories for")
+                                .required(true)
+                                .index(1)
+                        )
+                )
+        )
+        .subcommand(
+            Command::new("stories")
+                .about("Story/comment operations")
+                .subcommand(
+                    Command::new("list")
+                        .about("List stories/comments for a task")
+                        .arg(
+                            Arg::new("task")
+                                .long("task")
+                                .short('t')
+                                .value_name("TASK_ID")
+                                .help("Task ID to fetch stories for")
+                                .required(true)
+                        )
+                )
         )
         .get_matches();
 
@@ -133,8 +159,46 @@ async fn main() -> Result<()> {
                         }
                     }
                 }
+                Some(("stories", stories_matches)) => {
+                    if let Some(task_id) = stories_matches.get_one::<String>("task_id") {
+                        // Get stories for task
+                        match state_manager.get_task_comments(&task_id.as_str().into()).await {
+                            Ok(comments) => {
+                                let json = serde_json::to_string_pretty(&comments)?;
+                                println!("{}", json);
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Failed to list stories: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
                 _ => {
                     eprintln!("❌ Unknown tasks subcommand");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Some(("stories", stories_matches)) => {
+            match stories_matches.subcommand() {
+                Some(("list", list_matches)) => {
+                    if let Some(task_id) = list_matches.get_one::<String>("task") {
+                        // Get stories for task
+                        match state_manager.get_task_comments(&task_id.as_str().into()).await {
+                            Ok(comments) => {
+                                let json = serde_json::to_string_pretty(&comments)?;
+                                println!("{}", json);
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Failed to list stories: {}", e);
+                                std::process::exit(1);
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    eprintln!("❌ Unknown stories subcommand");
                     std::process::exit(1);
                 }
             }

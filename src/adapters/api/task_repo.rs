@@ -99,7 +99,7 @@ impl TaskRepository for AsanaTaskRepository {
 
     async fn get_task_comments(&self, task_id: &TaskId) -> RepositoryResult<Vec<Comment>> {
         let path = format!(
-            "/tasks/{}/stories?opt_fields=gid,text,author.gid,author.name,author.email,created_at",
+            "/tasks/{}/stories?opt_fields=gid,text,created_by.gid,created_by.name,created_by.email,created_at,type,resource_subtype",
             task_id.0
         );
         

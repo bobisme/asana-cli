@@ -27,9 +27,11 @@ impl From<&str> for CommentId {
 pub struct Comment {
     pub id: CommentId,
     pub text: String,
-    pub author: super::User,
+    pub author: Option<super::User>,
     pub created_at: DateTime<Utc>,
     pub task_id: super::TaskId,
+    pub story_type: Option<String>,
+    pub resource_subtype: Option<String>,
 }
 
 impl Comment {
