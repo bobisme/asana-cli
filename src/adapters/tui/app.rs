@@ -447,11 +447,15 @@ impl App {
             }
             
             AppEvent::CloseModal | AppEvent::ClearSearch => {
-                if self.focused_widget == FocusedWidget::Search && !self.search_query.is_empty() {
+                if self.focused_widget == FocusedWidget::Search {
+                    // Esc from search: clear search and focus task list
                     self.search_bar.clear();
                     self.search_query.clear();
                     self.update_filtered_tasks();
+                    self.focused_widget = FocusedWidget::TaskList;
+                    self.search_bar.set_focused(false);
                 } else {
+                    // Esc from other contexts: close modals/details
                     self.mode = AppMode::TaskList;
                 }
             }
@@ -487,7 +491,21 @@ impl App {
             }
             
             AppEvent::Enter | AppEvent::SelectTask => {
-                if self.focused_widget == FocusedWidget::TaskList {
+                if self.focused_widget == FocusedWidget::Search {
+                    // Enter from search: switch to task list and select highlighted task
+                    self.focused_widget = FocusedWidget::TaskList;
+                    self.search_bar.set_focused(false);
+                    
+                    // If there's a selected task, open its details
+                    if let Some(selected) = self.task_list_state.selected() {
+                        if let Some(task) = self.filtered_tasks.get(selected) {
+                            let task_id = task.id.clone();
+                            self.mode = AppMode::TaskDetail(task_id.clone());
+                            self.load_task_details(&task_id).await?;
+                        }
+                    }
+                } else if self.focused_widget == FocusedWidget::TaskList {
+                    // Enter from task list: open task details
                     if let Some(selected) = self.task_list_state.selected() {
                         if let Some(task) = self.filtered_tasks.get(selected) {
                             let task_id = task.id.clone();
