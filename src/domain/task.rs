@@ -83,17 +83,17 @@ impl Task {
     /// Business rule: get display status with color
     pub fn status_display(&self) -> (&'static str, &'static str) {
         if self.completed {
-            ("✓ Complete", "green")
+            ("✓", "green")
         } else if self.is_overdue() {
-            ("⚠ Overdue", "red")
+            ("!", "red")  // Removed warning emoji, just show exclamation
         } else if let Some(due) = self.due_date {
             if due.date_naive() == Utc::now().date_naive() {
-                ("⏰ Due Today", "yellow")
+                ("⏰", "yellow")
             } else {
-                ("○ Incomplete", "white")
+                ("○", "white")
             }
         } else {
-            ("○ Incomplete", "white")
+            ("○", "white")
         }
     }
     

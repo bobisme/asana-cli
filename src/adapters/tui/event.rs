@@ -77,15 +77,22 @@ impl EventHandler {
 
     fn handle_key_event(&mut self, key_event: KeyEvent) -> AppEvent {
         match key_event {
-            // Global shortcuts
+            // Global quit with Ctrl+C
             KeyEvent {
-                code: KeyCode::Char('q'),
-                modifiers: KeyModifiers::NONE,
+                code: KeyCode::Char('c'),
+                modifiers: KeyModifiers::CONTROL,
                 ..
             } => {
                 self.should_quit = true;
                 AppEvent::Quit
             }
+            
+            // 'q' for context-sensitive quit/close
+            KeyEvent {
+                code: KeyCode::Char('q'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => AppEvent::Character('q'),
             
             KeyEvent {
                 code: KeyCode::Char('r'),
@@ -130,38 +137,43 @@ impl EventHandler {
                 ..
             } => AppEvent::Enter,
             
-            // Vim-style navigation
+            // Arrow key navigation (always works)
             KeyEvent {
-                code: KeyCode::Char('j'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } | KeyEvent {
                 code: KeyCode::Down,
                 modifiers: KeyModifiers::NONE,
                 ..
             } => AppEvent::NextTask,
             
             KeyEvent {
-                code: KeyCode::Char('k'),
-                modifiers: KeyModifiers::NONE,
-                ..
-            } | KeyEvent {
                 code: KeyCode::Up,
                 modifiers: KeyModifiers::NONE,
                 ..
             } => AppEvent::PreviousTask,
             
+            // Vim-style navigation as characters (context-sensitive)
+            KeyEvent {
+                code: KeyCode::Char('j'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => AppEvent::Character('j'),
+            
+            KeyEvent {
+                code: KeyCode::Char('k'),
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => AppEvent::Character('k'),
+            
             KeyEvent {
                 code: KeyCode::Char('g'),
                 modifiers: KeyModifiers::NONE,
                 ..
-            } => AppEvent::FirstTask,
+            } => AppEvent::Character('g'),
             
             KeyEvent {
                 code: KeyCode::Char('G'),
                 modifiers: KeyModifiers::SHIFT,
                 ..
-            } => AppEvent::LastTask,
+            } => AppEvent::Character('G'),
             
             // Task actions
             KeyEvent {
