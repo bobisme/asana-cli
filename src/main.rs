@@ -59,6 +59,16 @@ async fn main() -> Result<()> {
                         .about("List tasks as JSON")
                 )
                 .subcommand(
+                    Command::new("get")
+                        .about("Get a specific task by ID")
+                        .arg(
+                            Arg::new("task_id")
+                                .help("Task ID to fetch")
+                                .required(true)
+                                .index(1)
+                        )
+                )
+                .subcommand(
                     Command::new("stories")
                         .about("List stories/comments for a task")
                         .arg(
@@ -160,6 +170,24 @@ async fn main() -> Result<()> {
                         Err(e) => {
                             eprintln!("❌ Failed to list tasks: {e}");
                             std::process::exit(1);
+                        }
+                    }
+                }
+                Some(("get", get_matches)) => {
+                    if let Some(task_id) = get_matches.get_one::<String>("task_id") {
+                        // Initialize state manager
+                        state_manager.initialize().await?;
+                        
+                        // Get the specific task
+                        match state_manager.get_task(&task_id.as_str().into()).await {
+                            Ok(task) => {
+                                let json = serde_json::to_string_pretty(&task)?;
+                                println!("{json}");
+                            }
+                            Err(e) => {
+                                eprintln!("❌ Failed to get task: {e}");
+                                std::process::exit(1);
+                            }
                         }
                     }
                 }
