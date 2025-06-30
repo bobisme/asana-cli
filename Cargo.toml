@@ -34,6 +34,7 @@ keyring = "2.0"
 
 # HTML to markdown conversion
 htmd = "0.2"
+kuchiki = "0.8"
 
 # Fuzzy search
 nucleo = "0.5"

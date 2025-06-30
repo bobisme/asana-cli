@@ -1,7 +1,62 @@
+use kuchiki::traits::*;
 use ratatui::{
     prelude::*,
     text::{Line, Span},
 };
+
+/// Fix invalid nested list structure in HTML
+/// Asana's API can produce invalid HTML for nested lists (e.g., a <ul>
+/// as a direct child of another <ul>, or <ol> as a direct child of <ol>).
+/// We pre-process the HTML to correct the structure before converting to Markdown.
+fn fix_nested_lists(html: &str) -> String {
+    let document = kuchiki::parse_html().one(html);
+    
+    // Find all <ul> and <ol> elements
+    let list_selector = match document.select("ul, ol") {
+        Ok(selector) => selector,
+        Err(_) => return html.to_string(), // Return original if selector fails
+    };
+    
+    // Collect nodes to fix (we can't modify while iterating)
+    let mut fixes_needed = Vec::new();
+    
+    for list_ref in list_selector {
+        let list_node = list_ref.as_node();
+        
+        // Check if parent is also a list (ul or ol)
+        if let Some(parent) = list_node.parent() {
+            if let Some(element) = parent.as_element() {
+                let parent_name = &element.name.local;
+                if parent_name.as_ref() == "ul" || parent_name.as_ref() == "ol" {
+                    // This list is a direct child of another list - needs fixing
+                    // Find the preceding <li> sibling
+                    let mut current = list_node.clone();
+                    while let Some(prev_sibling) = current.previous_sibling() {
+                        if let Some(element) = prev_sibling.as_element() {
+                            if element.name.local.as_ref() == "li" {
+                                // Found the preceding <li> - store the fix needed
+                                fixes_needed.push((list_node.clone(), prev_sibling.clone()));
+                                break;
+                            }
+                        }
+                        current = prev_sibling;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Apply the fixes
+    for (list_node, li_node) in fixes_needed {
+        // Detach the list from its current position
+        list_node.detach();
+        // Append it to the preceding <li>
+        li_node.append(list_node);
+    }
+    
+    // Return the fixed HTML
+    document.to_string()
+}
 
 /// Convert HTML description to markdown for better TUI rendering
 pub fn html_to_markdown(html: &str) -> String {
@@ -9,9 +64,12 @@ pub fn html_to_markdown(html: &str) -> String {
         return String::new();
     }
 
+    // First fix any invalid nested list structures
+    let fixed_html = fix_nested_lists(html);
+
     // Convert HTML to markdown using htmd with better error handling
     // htmd has better customization options for modifying HTML before conversion
-    match htmd::convert(html) {
+    match htmd::convert(&fixed_html) {
         Ok(markdown) => {
             // Clean up extra whitespace and newlines
             markdown.trim().to_string()
