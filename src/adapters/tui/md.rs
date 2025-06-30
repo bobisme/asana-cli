@@ -196,24 +196,33 @@ fn preprocess_markdown(markdown: &str) -> String {
             continue;
         }
 
-        // Check if this line starts with exactly 4 spaces
-        if line.starts_with("    ") && !line.starts_with("     ") {
-            // This might be a false code block from htmd
-            // Only treat as code if previous line was blank and next content looks like code
-            let trimmed = line.trim();
+        // Check if this line is a list item
+        let trimmed = line.trim();
+        let is_list_item = trimmed.starts_with("* ")
+            || trimmed.starts_with("- ")
+            || trimmed.starts_with("+ ")
+            || (trimmed.chars().nth(0).map_or(false, |c| c.is_numeric()) && trimmed.contains(". "));
 
-            // Heuristic: if it looks like prose (has multiple words, punctuation),
-            // it's probably not meant to be code
-            let looks_like_prose = trimmed.split_whitespace().count() > 5
-                || trimmed.contains(". ")
-                || trimmed.contains(", ");
-
-            if looks_like_prose || !prev_was_blank {
-                // Convert to non-indented line
-                result.push(line.trim_start().to_string());
-            } else {
-                // Keep as-is, it might be actual code
+        // Check if this line starts with 4+ spaces
+        if line.starts_with("    ") {
+            // If it's a list item, keep the indentation
+            if is_list_item {
                 result.push(line.to_string());
+            } else {
+                // This might be a false code block from htmd
+                // Heuristic: if it looks like prose (has multiple words, punctuation),
+                // it's probably not meant to be code
+                let looks_like_prose = trimmed.split_whitespace().count() > 5
+                    || trimmed.contains(". ")
+                    || trimmed.contains(", ");
+
+                if looks_like_prose || !prev_was_blank {
+                    // Convert to non-indented line
+                    result.push(line.trim_start().to_string());
+                } else {
+                    // Keep as-is, it might be actual code
+                    result.push(line.to_string());
+                }
             }
         } else {
             result.push(line.to_string());
@@ -258,9 +267,16 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
     let options = minimad::Options::default();
     let md_lines = minimad::parse_text(&preprocessed, options);
 
+    // Keep track of original lines for indentation
+    let original_lines: Vec<&str> = preprocessed.lines().collect();
+
     // Convert each parsed line
-    for md_line in md_lines.lines {
+    for (line_idx, md_line) in md_lines.lines.into_iter().enumerate() {
         let mut spans = Vec::new();
+
+        // Get the original line to preserve indentation
+        let original_line = original_lines.get(line_idx).copied().unwrap_or("");
+        let original_indent = original_line.len() - original_line.trim_start().len();
 
         // Process the line based on its type
         match &md_line {
@@ -318,26 +334,44 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                         }
                     }
                     CompositeStyle::Code => {
-                        // Code block style - no indent, black background
+                        // Check if this is actually a list item that minimad misidentified as code
                         let line_content: String =
                             composite.compounds.iter().map(|c| c.src).collect();
 
-                        // Pad to full width if width is provided
-                        let padded_content = if let Some(w) = width {
-                            let content_len = line_content.chars().count();
-                            if content_len < w as usize {
-                                format!("{}{}", line_content, " ".repeat(w as usize - content_len))
+                        let trimmed = line_content.trim();
+                        let is_list_item = trimmed.starts_with("* ")
+                            || trimmed.starts_with("- ")
+                            || trimmed.starts_with("+ ")
+                            || (trimmed.chars().nth(0).map_or(false, |c| c.is_numeric())
+                                && trimmed.contains(". "));
+
+                        if is_list_item {
+                            // This is a list item with indentation, not code
+                            // Use the original indentation
+                            let indent = " ".repeat(original_indent);
+                            spans.push(Span::raw(format!("{}{}", indent, line_content)));
+                        } else {
+                            // Real code block - apply black background and padding
+                            let padded_content = if let Some(w) = width {
+                                let content_len = line_content.chars().count();
+                                if content_len < w as usize {
+                                    format!(
+                                        "{}{}",
+                                        line_content,
+                                        " ".repeat(w as usize - content_len)
+                                    )
+                                } else {
+                                    line_content
+                                }
                             } else {
                                 line_content
-                            }
-                        } else {
-                            line_content
-                        };
+                            };
 
-                        spans.push(Span::styled(
-                            padded_content,
-                            Style::default().bg(Color::Black),
-                        ));
+                            spans.push(Span::styled(
+                                padded_content,
+                                Style::default().bg(Color::Black),
+                            ));
+                        }
                     }
                     CompositeStyle::Quote => {
                         // Quote style
@@ -352,24 +386,74 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                         }
                     }
                     _ => {
-                        // Regular paragraph text
-                        for compound in &composite.compounds {
-                            let mut style = Style::default();
+                        // Check if this is a numbered list item that minimad didn't parse
+                        let full_line: String = composite.compounds.iter().map(|c| c.src).collect();
+                        let trimmed = full_line.trim_start();
+                        let indent_count = full_line.len() - trimmed.len();
 
-                            if compound.bold {
-                                style = style.add_modifier(Modifier::BOLD);
-                            }
-                            if compound.italic {
-                                style = style.add_modifier(Modifier::ITALIC);
-                            }
-                            if compound.strikeout {
-                                style = style.add_modifier(Modifier::CROSSED_OUT);
-                            }
-                            if compound.code {
-                                style = style.fg(Color::Green).bg(Color::Black);
-                            }
+                        // Check for numbered list pattern
+                        if let Some(dot_pos) = trimmed.find(". ") {
+                            let prefix = &trimmed[..dot_pos];
+                            if prefix.chars().all(|c| c.is_numeric()) && !prefix.is_empty() {
+                                // This is a numbered list item
+                                // Just render it with proper indentation, don't add extra numbering
+                                for compound in &composite.compounds {
+                                    let mut style = Style::default();
+                                    if compound.bold {
+                                        style = style.add_modifier(Modifier::BOLD);
+                                    }
+                                    if compound.italic {
+                                        style = style.add_modifier(Modifier::ITALIC);
+                                    }
+                                    if compound.strikeout {
+                                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                                    }
+                                    if compound.code {
+                                        style = style.fg(Color::Green).bg(Color::Black);
+                                    }
+                                    spans.push(Span::styled(compound.src.to_string(), style));
+                                }
+                            } else {
+                                // Not a numbered list, render normally
+                                for compound in &composite.compounds {
+                                    let mut style = Style::default();
 
-                            spans.push(Span::styled(compound.src.to_string(), style));
+                                    if compound.bold {
+                                        style = style.add_modifier(Modifier::BOLD);
+                                    }
+                                    if compound.italic {
+                                        style = style.add_modifier(Modifier::ITALIC);
+                                    }
+                                    if compound.strikeout {
+                                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                                    }
+                                    if compound.code {
+                                        style = style.fg(Color::Green).bg(Color::Black);
+                                    }
+
+                                    spans.push(Span::styled(compound.src.to_string(), style));
+                                }
+                            }
+                        } else {
+                            // Regular paragraph text
+                            for compound in &composite.compounds {
+                                let mut style = Style::default();
+
+                                if compound.bold {
+                                    style = style.add_modifier(Modifier::BOLD);
+                                }
+                                if compound.italic {
+                                    style = style.add_modifier(Modifier::ITALIC);
+                                }
+                                if compound.strikeout {
+                                    style = style.add_modifier(Modifier::CROSSED_OUT);
+                                }
+                                if compound.code {
+                                    style = style.fg(Color::Green).bg(Color::Black);
+                                }
+
+                                spans.push(Span::styled(compound.src.to_string(), style));
+                            }
                         }
                     }
                 }
@@ -791,5 +875,164 @@ fn main() {
         let result = html_to_markdown(html);
         assert!(result.contains("[Image: test image]"));
         assert!(!result.contains("!["));
+    }
+
+    #[test]
+    fn test_numbered_nested_lists() {
+        let html = r#"<ol>
+<li>First item
+<ol>
+<li>Nested item 1</li>
+<li>Nested item 2</li>
+</ol>
+</li>
+<li>Second item</li>
+</ol>"#;
+
+        let markdown = html_to_markdown(html);
+        println!("Converted markdown:\n{}", markdown);
+
+        // Let's also check what the preprocessed markdown looks like
+        let preprocessed = preprocess_markdown(&markdown);
+        println!("\nPreprocessed markdown:\n{}", preprocessed);
+
+        // Parse with minimad to see what it gives us
+        use termimad::minimad;
+        let md_lines = minimad::parse_text(&preprocessed, minimad::Options::default());
+        println!("\nMinimad parsing (raw lines vs compounds):");
+        for (i, (raw_line, parsed_line)) in
+            preprocessed.lines().zip(md_lines.lines.iter()).enumerate()
+        {
+            match parsed_line {
+                minimad::Line::Normal(composite) => {
+                    let full_text: String = composite.compounds.iter().map(|c| c.src).collect();
+                    println!(
+                        "  Line {}: Raw='{}' -> Normal({:?}) - Compounds='{}'",
+                        i, raw_line, composite.style, full_text
+                    );
+                }
+                _ => println!("  Line {}: Raw='{}' -> {:?}", i, raw_line, parsed_line),
+            }
+        }
+
+        let lines = parse_markdown_to_lines(&markdown);
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect();
+            println!("Line {}: '{}'", i, text);
+        }
+
+        // Check that nested items are properly indented
+        assert!(lines.len() >= 4);
+        let line1_text: String = lines[1]
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        let line2_text: String = lines[2]
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+
+        // First level items should start with number
+        assert!(lines[0].spans.iter().any(|s| s.content.contains("1.")));
+        // Nested items should have indentation (4 spaces)
+        assert!(
+            line1_text.starts_with("    "),
+            "Line 1 should start with 4 spaces, got: '{}'",
+            line1_text
+        );
+    }
+
+    #[test]
+    fn test_all_list_types() {
+        let markdown = r#"# List Test
+
+## Bullet Lists with *
+* First item
+  * Nested item
+    * Double nested
+  * Back to single nested
+* Second item
+
+## Bullet Lists with -
+- First item
+  - Nested item
+    - Double nested
+  - Back to single nested
+- Second item
+
+## Numbered Lists
+1. First item
+   1. Nested item
+      1. Double nested
+   2. Back to single nested
+2. Second item
+
+## Mixed Lists
+1. Numbered first
+   * Bullet nested
+     - Dash double nested
+   * Back to bullet
+2. Numbered second"#;
+
+        let lines = parse_markdown_to_lines(markdown);
+
+        // Count indented lines
+        let indented_lines: Vec<(usize, String)> = lines
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let text: String = line
+                    .spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect();
+                (i, text)
+            })
+            .filter(|(_, text)| text.starts_with("  ") || text.starts_with("    "))
+            .collect();
+
+        println!("Found {} indented lines:", indented_lines.len());
+        for (i, text) in &indented_lines {
+            println!("  Line {}: '{}'", i, text);
+        }
+
+        // We should have multiple indented lines
+        assert!(
+            indented_lines.len() >= 10,
+            "Should have at least 10 indented lines, got {}",
+            indented_lines.len()
+        );
+
+        // Check specific indentations
+        assert!(
+            indented_lines
+                .iter()
+                .any(|(_, text)| text.starts_with("  • ")),
+            "Should have 2-space indented bullet"
+        );
+        assert!(
+            indented_lines
+                .iter()
+                .any(|(_, text)| text.starts_with("    * ") || text.starts_with("    - ")),
+            "Should have 4-space indented bullet/dash"
+        );
+        assert!(
+            indented_lines
+                .iter()
+                .any(|(_, text)| text.starts_with("   1. ")),
+            "Should have 3-space indented number"
+        );
+        assert!(
+            indented_lines
+                .iter()
+                .any(|(_, text)| text.starts_with("      ")),
+            "Should have 6+ space indented item"
+        );
     }
 }
