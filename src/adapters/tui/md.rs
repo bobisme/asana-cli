@@ -55,6 +55,40 @@ fn fix_nested_lists(html: &str) -> String {
     document.to_string()
 }
 
+/// Replace <img> tags with placeholder text
+fn replace_images_with_placeholders(html: &str) -> String {
+    let document = kuchiki::parse_html().one(html);
+
+    // Find all img elements
+    if let Ok(img_selector) = document.select("img") {
+        for img_ref in img_selector {
+            let img_node = img_ref.as_node();
+
+            // Get alt text if available
+            let alt_text = if let Some(element) = img_node.as_element() {
+                element
+                    .attributes
+                    .borrow()
+                    .get("alt")
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| "image".to_string())
+            } else {
+                "image".to_string()
+            };
+
+            // Create placeholder text node
+            let placeholder_text = format!("[Image: {}]", alt_text);
+            let text_node = kuchiki::NodeRef::new_text(placeholder_text);
+
+            // Replace img with text node
+            img_node.insert_before(text_node);
+            img_node.detach();
+        }
+    }
+
+    document.to_string()
+}
+
 /// Convert <pre> tags to <pre><code> for proper code block conversion
 fn wrap_pre_with_code(html: &str) -> String {
     // Simple approach: replace <pre> with <pre><code> and </pre> with </code></pre>
@@ -70,8 +104,11 @@ pub fn html_to_markdown(html: &str) -> String {
         return String::new();
     }
 
-    // First wrap <pre> tags with <code> for proper code block conversion
-    let pre_wrapped = wrap_pre_with_code(html);
+    // First replace images with placeholders
+    let img_replaced = replace_images_with_placeholders(html);
+
+    // Then wrap <pre> tags with <code> for proper code block conversion
+    let pre_wrapped = wrap_pre_with_code(&img_replaced);
 
     // Then fix any invalid nested list structures
     let fixed_html = fix_nested_lists(&pre_wrapped);

@@ -69,6 +69,10 @@ pub struct App {
     description_scroll_offset: u16,
     comments_scroll_offset: u16,
     needs_task_reload: bool,
+
+    // Cached parsed content for performance
+    cached_description_lines: Option<Vec<Line<'static>>>,
+    cached_comments_lines: Option<Vec<Line<'static>>>,
 }
 
 impl App {
@@ -107,6 +111,10 @@ impl App {
             description_scroll_offset: 0,
             comments_scroll_offset: 0,
             needs_task_reload: false,
+
+            // Cached parsed content
+            cached_description_lines: None,
+            cached_comments_lines: None,
         };
 
         // Select first task by default
@@ -190,6 +198,10 @@ impl App {
         // Reset scroll offsets for both description and comments panes when switching tasks
         self.description_scroll_offset = 0;
         self.comments_scroll_offset = 0;
+
+        // Clear cached content when switching tasks
+        self.cached_description_lines = None;
+        self.cached_comments_lines = None;
 
         // Load task details and comments in parallel
         let task_future = self.state_manager.get_task(task_id);
@@ -715,7 +727,7 @@ impl App {
             .and_then(|i| self.filtered_tasks.get(i));
 
         if let Some(task) = selected_task {
-            if let Some(current_task) = &self.current_task {
+            if let Some(current_task) = self.current_task.clone() {
                 if current_task.id == task.id {
                     // Show task description using existing render logic
                     let block = Block::default()
@@ -728,7 +740,7 @@ impl App {
                     frame.render_widget(block, area);
 
                     // Render description content
-                    self.render_description_content_only(frame, inner_area, current_task);
+                    self.render_description_content_only(frame, inner_area, &current_task);
                 } else {
                     // Loading different task
                     self.render_loading_placeholder(frame, area, title, border_style);
@@ -829,176 +841,196 @@ impl App {
         frame.render_widget(paragraph, area);
     }
 
-    fn render_description_content_only(&self, frame: &mut Frame, area: Rect, task: &Task) {
-        // Collect description content
-        let mut lines = Vec::new();
+    fn render_description_content_only(&mut self, frame: &mut Frame, area: Rect, task: &Task) {
+        // Check if we need to regenerate the cache
+        if self.cached_description_lines.is_none() {
+            // Generate and cache the lines
+            let mut lines = Vec::new();
 
-        // Add task info section
-        let (status_text, status_color) = task.status_display();
-        let status_style = match status_color {
-            "red" => Style::default().fg(Color::Red),
-            "yellow" => Style::default().fg(Color::Yellow),
-            "green" => Style::default().fg(Color::Green),
-            "gray" => Style::default().fg(Color::Gray),
-            _ => Style::default(),
-        };
+            // Add task info section
+            let (status_text, status_color) = task.status_display();
+            let status_style = match status_color {
+                "red" => Style::default().fg(Color::Red),
+                "yellow" => Style::default().fg(Color::Yellow),
+                "green" => Style::default().fg(Color::Green),
+                "gray" => Style::default().fg(Color::Gray),
+                _ => Style::default(),
+            };
 
-        lines.push(Line::from(vec![
-            Span::styled("Status: ", Style::default().fg(Color::Cyan)),
-            Span::styled(status_text, status_style),
-        ]));
-
-        let due_text = task.due_date_display();
-        let due_style = if task.is_overdue() {
-            Style::default().fg(Color::Red)
-        } else {
-            Style::default()
-        };
-        lines.push(Line::from(vec![
-            Span::styled("Due: ", Style::default().fg(Color::Cyan)),
-            Span::styled(due_text, due_style),
-        ]));
-
-        if task.assignee.is_some() {
-            let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
             lines.push(Line::from(vec![
-                Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
-                Span::raw(assignee_display.to_string()),
+                Span::styled("Status: ", Style::default().fg(Color::Cyan)),
+                Span::styled(status_text, status_style),
             ]));
-        }
 
-        // Add blank line separator
-        lines.push(Line::from(""));
+            let due_text = task.due_date_display();
+            let due_style = if task.is_overdue() {
+                Style::default().fg(Color::Red)
+            } else {
+                Style::default()
+            };
+            lines.push(Line::from(vec![
+                Span::styled("Due: ", Style::default().fg(Color::Cyan)),
+                Span::styled(due_text, due_style),
+            ]));
 
-        // Add description if present
-        if let Some(description) = &task.description {
-            if !description.trim().is_empty() {
-                let markdown_desc = md::html_to_markdown(description);
-                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
-
-                // Add description header
-                styled_lines.insert(
-                    0,
-                    Line::from(vec![Span::styled(
-                        "Description:",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )]),
-                );
-
-                lines.extend(styled_lines);
+            if task.assignee.is_some() {
+                let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
+                lines.push(Line::from(vec![
+                    Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
+                    Span::raw(assignee_display.to_string()),
+                ]));
             }
-        } else {
-            lines.push(Line::from(vec![Span::styled(
-                "No description available",
-                Style::default().fg(Color::Gray),
-            )]));
+
+            // Add blank line separator
+            lines.push(Line::from(""));
+
+            // Add description if present
+            if let Some(description) = &task.description {
+                if !description.trim().is_empty() {
+                    let markdown_desc = md::html_to_markdown(description);
+                    let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
+
+                    // Add description header
+                    styled_lines.insert(
+                        0,
+                        Line::from(vec![Span::styled(
+                            "Description:",
+                            Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                        )]),
+                    );
+
+                    lines.extend(styled_lines);
+                }
+            } else {
+                lines.push(Line::from(vec![Span::styled(
+                    "No description available",
+                    Style::default().fg(Color::Gray),
+                )]));
+            }
+
+            // Cache the generated lines
+            self.cached_description_lines = Some(lines);
         }
 
-        // Apply scrolling - skip lines based on scroll offset
-        let visible_lines: Vec<Line> = lines
-            .into_iter()
-            .skip(self.description_scroll_offset as usize)
-            .collect();
+        // Use cached lines for rendering
+        if let Some(cached_lines) = &self.cached_description_lines {
+            // Apply scrolling - skip lines based on scroll offset
+            let visible_lines: Vec<Line> = cached_lines
+                .iter()
+                .skip(self.description_scroll_offset as usize)
+                .cloned()
+                .collect();
 
-        let paragraph = Paragraph::new(visible_lines)
-            .wrap(Wrap { trim: false })
-            .alignment(ratatui::layout::Alignment::Left);
-        frame.render_widget(paragraph, area);
+            let paragraph = Paragraph::new(visible_lines)
+                .wrap(Wrap { trim: false })
+                .alignment(ratatui::layout::Alignment::Left);
+            frame.render_widget(paragraph, area);
+        }
     }
 
-    fn render_comments_content_only(&self, frame: &mut Frame, area: Rect) {
-        // Collect comments content
-        let mut lines = Vec::new();
+    fn render_comments_content_only(&mut self, frame: &mut Frame, area: Rect) {
+        // Check if we need to regenerate the cache
+        if self.cached_comments_lines.is_none() {
+            // Generate and cache the lines
+            let mut lines = Vec::new();
 
-        // Comments and activity
-        if self.task_comments.is_empty() {
-            lines.push(Line::from(vec![Span::styled(
-                "No comments or activity",
-                Style::default().fg(Color::Gray),
-            )]));
-        } else {
-            // Separate comments from system activity
-            let mut user_comments = Vec::new();
-            let mut system_activity = Vec::new();
-
-            for comment in &self.task_comments {
-                match comment.story_type.as_deref() {
-                    Some("comment") => user_comments.push(comment),
-                    Some("system") => system_activity.push(comment),
-                    _ => system_activity.push(comment), // Default to system if unclear
-                }
-            }
-
-            // Render user comments first
-            if !user_comments.is_empty() {
+            // Comments and activity
+            if self.task_comments.is_empty() {
                 lines.push(Line::from(vec![Span::styled(
-                    "Comments",
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
+                    "No comments or activity",
+                    Style::default().fg(Color::Gray),
                 )]));
-                lines.push(Line::from(""));
+            } else {
+                // Separate comments from system activity
+                let mut user_comments = Vec::new();
+                let mut system_activity = Vec::new();
 
-                for comment in &user_comments {
-                    let author_name = comment
-                        .author
-                        .as_ref()
-                        .map(|u| u.name.as_str())
-                        .unwrap_or("Unknown");
-                    let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
+                for comment in &self.task_comments {
+                    match comment.story_type.as_deref() {
+                        Some("comment") => user_comments.push(comment),
+                        Some("system") => system_activity.push(comment),
+                        _ => system_activity.push(comment), // Default to system if unclear
+                    }
+                }
 
-                    lines.push(Line::from(vec![
-                        Span::styled("• ", Style::default().fg(Color::Yellow)),
-                        Span::styled(
-                            author_name,
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!(" ({})", time_display),
-                            Style::default().fg(Color::Gray),
-                        ),
-                    ]));
-
-                    let cleaned_text = md::html_to_markdown(&comment.text);
-                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                // Render user comments first
+                if !user_comments.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "Comments",
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    )]));
                     lines.push(Line::from(""));
+
+                    for comment in &user_comments {
+                        let author_name = comment
+                            .author
+                            .as_ref()
+                            .map(|u| u.name.clone())
+                            .unwrap_or_else(|| "Unknown".to_string());
+                        let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
+
+                        lines.push(Line::from(vec![
+                            Span::styled("• ", Style::default().fg(Color::Yellow)),
+                            Span::styled(
+                                author_name,
+                                Style::default()
+                                    .fg(Color::Yellow)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            Span::styled(
+                                format!(" ({})", time_display),
+                                Style::default().fg(Color::Gray),
+                            ),
+                        ]));
+
+                        let cleaned_text = md::html_to_markdown(&comment.text);
+                        lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                        lines.push(Line::from(""));
+                    }
+                }
+
+                // Render system activity
+                if !system_activity.is_empty() {
+                    lines.push(Line::from(vec![Span::styled(
+                        "Activity",
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .add_modifier(Modifier::BOLD),
+                    )]));
+                    lines.push(Line::from(""));
+
+                    for activity in &system_activity {
+                        let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
+                        let cleaned_text = md::html_to_markdown(&activity.text);
+
+                        lines.push(Line::from(vec![
+                            Span::styled("• ", Style::default().fg(Color::Blue)),
+                            Span::raw(format!("{} ({})", cleaned_text, time_display)),
+                        ]));
+                    }
                 }
             }
 
-            // Render system activity
-            if !system_activity.is_empty() {
-                lines.push(Line::from(vec![Span::styled(
-                    "Activity",
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-                lines.push(Line::from(""));
-
-                for activity in &system_activity {
-                    let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                    let cleaned_text = md::html_to_markdown(&activity.text);
-
-                    lines.push(Line::from(vec![
-                        Span::styled("• ", Style::default().fg(Color::Blue)),
-                        Span::raw(format!("{} ({})", cleaned_text, time_display)),
-                    ]));
-                }
-            }
+            // Cache the generated lines
+            self.cached_comments_lines = Some(lines);
         }
 
-        // Apply scrolling - skip lines based on scroll offset
-        let visible_lines: Vec<Line> = lines
-            .into_iter()
-            .skip(self.comments_scroll_offset as usize)
-            .collect();
+        // Use cached lines for rendering
+        if let Some(cached_lines) = &self.cached_comments_lines {
+            // Apply scrolling - skip lines based on scroll offset
+            let visible_lines: Vec<Line> = cached_lines
+                .iter()
+                .skip(self.comments_scroll_offset as usize)
+                .cloned()
+                .collect();
 
-        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
-        frame.render_widget(paragraph, area);
+            let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
+            frame.render_widget(paragraph, area);
+        }
     }
 
     fn render_task_list(&mut self, frame: &mut Frame, area: Rect) {
@@ -1075,7 +1107,7 @@ impl App {
         )
         .block(block)
         .highlight_style(Style::default().bg(Color::DarkGray))
-        .highlight_symbol("> ");
+        .highlight_symbol("");
 
         frame.render_stateful_widget(table, area, &mut self.task_list_state);
     }
