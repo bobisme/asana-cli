@@ -347,8 +347,13 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
 
                         if is_list_item {
                             // This is a list item with indentation, not code
-                            // Use the original indentation
-                            let indent = " ".repeat(original_indent);
+                            // Calculate how much indentation minimad stripped
+                            let minimad_indent =
+                                line_content.len() - line_content.trim_start().len();
+                            let stripped_indent = original_indent.saturating_sub(minimad_indent);
+
+                            // Only add back the stripped indentation
+                            let indent = " ".repeat(stripped_indent);
                             spans.push(Span::raw(format!("{}{}", indent, line_content)));
                         } else {
                             // Real code block - apply black background and padding
@@ -946,6 +951,157 @@ fn main() {
             "Line 1 should start with 4 spaces, got: '{}'",
             line1_text
         );
+    }
+
+    #[test]
+    fn test_double_nested_numbered_lists() {
+        // Test with 4-space indentation (what htmd actually produces)
+        let markdown = r#"1. item 1
+    1. nested item 1
+        1. double nested item 1"#;
+
+        println!("Original markdown:");
+        for (i, line) in markdown.lines().enumerate() {
+            println!(
+                "Line {}: '{}' ({} leading spaces)",
+                i,
+                line,
+                line.len() - line.trim_start().len()
+            );
+        }
+
+        // Check preprocessing
+        let preprocessed = preprocess_markdown(markdown);
+        println!("\nPreprocessed markdown:");
+        for (i, line) in preprocessed.lines().enumerate() {
+            println!(
+                "Line {}: '{}' ({} leading spaces)",
+                i,
+                line,
+                line.len() - line.trim_start().len()
+            );
+        }
+
+        // Check minimad parsing
+        use termimad::minimad;
+        let md_lines = minimad::parse_text(&preprocessed, minimad::Options::default());
+        println!("\nMinimad parsing:");
+        for (i, parsed_line) in md_lines.lines.iter().enumerate() {
+            match parsed_line {
+                minimad::Line::Normal(composite) => {
+                    let full_text: String = composite.compounds.iter().map(|c| c.src).collect();
+                    println!(
+                        "  Line {}: Normal({:?}) - '{}'",
+                        i, composite.style, full_text
+                    );
+                }
+                _ => println!("  Line {}: {:?}", i, parsed_line),
+            }
+        }
+
+        let lines = parse_markdown_to_lines(markdown);
+
+        println!("\nParsed lines:");
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line
+                .spans
+                .iter()
+                .map(|span| span.content.to_string())
+                .collect();
+            println!("Line {}: '{}'", i, text);
+
+            // Also print character count for indentation debugging
+            let leading_spaces = text.len() - text.trim_start().len();
+            println!("  Leading spaces: {}", leading_spaces);
+        }
+
+        // Get the text of each line
+        let line0_text: String = lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        let line1_text: String = lines[1]
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+        let line2_text: String = lines[2]
+            .spans
+            .iter()
+            .map(|s| s.content.to_string())
+            .collect();
+
+        // Check indentation levels
+        assert_eq!(line0_text, "1. item 1");
+        assert!(
+            line1_text.starts_with("    "),
+            "Line 1 should have 4 spaces, got: '{}'",
+            line1_text
+        );
+        assert!(
+            line2_text.starts_with("        "),
+            "Line 2 should have 8 spaces, got: '{}'",
+            line2_text
+        );
+
+        // Make sure we don't have excessive indentation
+        let line2_spaces = line2_text.len() - line2_text.trim_start().len();
+        assert!(
+            line2_spaces == 8,
+            "Line 2 should have exactly 8 spaces, got {} spaces: '{}'",
+            line2_spaces,
+            line2_text
+        );
+    }
+
+    #[test]
+    fn test_mixed_indentation_lists() {
+        // Test various indentation scenarios
+        let markdown = r#"1. Top level
+    1. 4-space indent
+        1. 8-space indent
+            1. 12-space indent
+    2. Back to 4-space
+2. Back to top
+
+* Bullet top
+    * 4-space bullet
+        * 8-space bullet
+    * Back to 4-space"#;
+
+        let lines = parse_markdown_to_lines(markdown);
+
+        // Check specific lines
+        let expected_indents = vec![
+            (0, 0),  // "1. Top level"
+            (1, 4),  // "    1. 4-space indent"
+            (2, 8),  // "        1. 8-space indent"
+            (3, 12), // "            1. 12-space indent"
+            (4, 4),  // "    2. Back to 4-space"
+            (5, 0),  // "2. Back to top"
+            (7, 0),  // "• Bullet top"
+            (8, 4),  // "    • 4-space bullet"
+            (9, 8),  // "        * 8-space bullet"
+            (10, 4), // "    • Back to 4-space"
+        ];
+
+        for (line_idx, expected_indent) in expected_indents {
+            if line_idx < lines.len() {
+                let text: String = lines[line_idx]
+                    .spans
+                    .iter()
+                    .map(|span| span.content.to_string())
+                    .collect();
+                let actual_indent = text.len() - text.trim_start().len();
+                println!("Line {}: {} spaces - '{}'", line_idx, actual_indent, text);
+                assert_eq!(
+                    actual_indent, expected_indent,
+                    "Line {} should have {} spaces, got {}: '{}'",
+                    line_idx, expected_indent, actual_indent, text
+                );
+            }
+        }
     }
 
     #[test]
