@@ -104,14 +104,91 @@ pub fn html_to_markdown(html: &str) -> String {
     }
 }
 
+
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
-    // For now, just return the raw markdown without any styling
-    markdown
-        .lines()
-        .map(|line| Line::from(line.to_string()))
-        .collect()
+    use termimad::minimad;
+    use ratatui::text::Span;
+    use ratatui::style::{Color, Modifier, Style};
+    
+    let mut lines = Vec::new();
+    
+    // Parse markdown with minimad
+    let options = minimad::Options::default();
+    let md_lines = minimad::parse_text(markdown, options);
+    
+    // Convert each parsed line
+    for md_line in md_lines.lines {
+        let mut spans = Vec::new();
+        
+        // Process the line based on its type
+        match &md_line {
+            minimad::Line::Normal(composite) => {
+                for compound in &composite.compounds {
+                    let mut style = Style::default();
+                    
+                    // Apply bold
+                    if compound.bold {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    
+                    // Apply italic
+                    if compound.italic {
+                        style = style.add_modifier(Modifier::ITALIC);
+                    }
+                    
+                    // Apply strikethrough
+                    if compound.strikeout {
+                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                    }
+                    
+                    // Apply code style
+                    if compound.code {
+                        style = style.fg(Color::Green).bg(Color::Black);
+                    }
+                    
+                    spans.push(Span::styled(compound.src.to_string(), style));
+                }
+            }
+            minimad::Line::TableRow(row) => {
+                // Simple table rendering
+                for (i, cell) in row.cells.iter().enumerate() {
+                    if i > 0 {
+                        spans.push(Span::raw(" | "));
+                    }
+                    for compound in &cell.compounds {
+                        spans.push(Span::raw(compound.src.to_string()));
+                    }
+                }
+            }
+            minimad::Line::CodeFence(ref composite) => {
+                // Code block with green text
+                for compound in &composite.compounds {
+                    spans.push(Span::styled(
+                        format!("    {}", compound.src),
+                        Style::default().fg(Color::Green),
+                    ));
+                }
+            }
+            minimad::Line::HorizontalRule => {
+                spans.push(Span::styled(
+                    "─".repeat(40),
+                    Style::default().fg(Color::Gray),
+                ));
+            }
+            _ => {
+                // For other line types, just get the text
+                spans.push(Span::raw(format!("{:?}", md_line)));
+            }
+        }
+        
+        lines.push(Line::from(spans));
+    }
+    
+    lines
 }
+
+
 
 // These helper functions are commented out for now since we're not using custom styling
 /*

@@ -55,6 +55,7 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 
 # URL encoding
 urlencoding = "2.1"
+termimad = { version = "0.30", default-features = false }
 
 [dev-dependencies]
 mockall = "0.12"
