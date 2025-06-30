@@ -1,9 +1,9 @@
 use color_eyre::Result;
-use htmd;
 use std::sync::Arc;
 // Removed tui_markdown due to version compatibility issues
 use super::{
     event::{AppEvent, EventHandler},
+    md,
     widgets::SearchBar,
 };
 use crate::application::StateManager;
@@ -85,25 +85,6 @@ impl App {
         }
     }
 
-    /// Convert HTML description to markdown for better TUI rendering
-    fn html_to_markdown(html: &str) -> String {
-        if html.trim().is_empty() {
-            return String::new();
-        }
-
-        // Convert HTML to markdown using htmd with better error handling
-        // htmd has better customization options for modifying HTML before conversion
-        match htmd::convert(html) {
-            Ok(markdown) => {
-                // Clean up extra whitespace and newlines
-                markdown.trim().to_string()
-            }
-            Err(_) => {
-                // Fallback to original HTML if conversion fails
-                html.to_string()
-            }
-        }
-    }
     pub fn new(state_manager: Arc<StateManager>) -> Self {
         let mut app = Self {
             state_manager,
@@ -250,8 +231,8 @@ impl App {
             // Description content
             if let Some(desc) = &task.description {
                 if !desc.trim().is_empty() {
-                    let markdown_desc = Self::html_to_markdown(desc);
-                    let styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                    let markdown_desc = md::html_to_markdown(desc);
+                    let styled_lines = md::parse_markdown_to_lines(&markdown_desc);
                     description_content_lines += styled_lines.len() as u16 + 1; // +1 for header
                 }
             } else {
@@ -892,8 +873,8 @@ impl App {
         // Add description if present
         if let Some(description) = &task.description {
             if !description.trim().is_empty() {
-                let markdown_desc = Self::html_to_markdown(description);
-                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                let markdown_desc = md::html_to_markdown(description);
+                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
 
                 // Add description header
                 styled_lines.insert(
@@ -982,7 +963,7 @@ impl App {
                         ),
                     ]));
 
-                    let cleaned_text = Self::html_to_markdown(&comment.text);
+                    let cleaned_text = md::html_to_markdown(&comment.text);
                     lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
                     lines.push(Line::from(""));
                 }
@@ -1000,7 +981,7 @@ impl App {
 
                 for activity in &system_activity {
                     let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                    let cleaned_text = Self::html_to_markdown(&activity.text);
+                    let cleaned_text = md::html_to_markdown(&activity.text);
 
                     lines.push(Line::from(vec![
                         Span::styled("• ", Style::default().fg(Color::Blue)),
@@ -1411,8 +1392,8 @@ impl App {
         // Add description if present
         if let Some(description) = &task.description {
             if !description.trim().is_empty() {
-                let markdown_desc = Self::html_to_markdown(description);
-                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                let markdown_desc = md::html_to_markdown(description);
+                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
 
                 // Add description header
                 styled_lines.insert(
@@ -1523,7 +1504,7 @@ impl App {
                         ),
                     ]));
 
-                    let cleaned_text = Self::html_to_markdown(&comment.text);
+                    let cleaned_text = md::html_to_markdown(&comment.text);
                     lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
                     lines.push(Line::from(""));
                 }
@@ -1541,7 +1522,7 @@ impl App {
 
                 for activity in &system_activity {
                     let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                    let cleaned_text = Self::html_to_markdown(&activity.text);
+                    let cleaned_text = md::html_to_markdown(&activity.text);
 
                     lines.push(Line::from(vec![
                         Span::styled("• ", Style::default().fg(Color::Blue)),
@@ -1607,10 +1588,10 @@ impl App {
     fn render_description_section(&self, frame: &mut Frame, area: Rect, task: &Task) {
         if let Some(description) = &task.description {
             if !description.trim().is_empty() {
-                let markdown_desc = Self::html_to_markdown(description);
+                let markdown_desc = md::html_to_markdown(description);
 
                 // Parse and render markdown with custom styling
-                let mut styled_lines = Self::parse_markdown_to_lines(&markdown_desc);
+                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
 
                 // Prepend "Description:" as the first line instead of using a block
                 styled_lines.insert(
@@ -1630,219 +1611,9 @@ impl App {
         }
     }
 
-    /// Parse markdown text and convert to styled Lines for better rendering
-    fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
-        let mut lines = Vec::new();
 
-        for line in markdown.lines() {
-            let trimmed = line.trim();
 
-            if trimmed.is_empty() {
-                lines.push(Line::from(""));
-                continue;
-            }
 
-            // Handle headers
-            if let Some(text) = trimmed.strip_prefix("# ") {
-                lines.push(Line::from(vec![Span::styled(
-                    text.to_string(),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-                lines.push(Line::from(""));
-            } else if let Some(text) = trimmed.strip_prefix("## ") {
-                lines.push(Line::from(vec![Span::styled(
-                    text.to_string(),
-                    Style::default()
-                        .fg(Color::Blue)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-            } else if let Some(text) = trimmed.strip_prefix("### ") {
-                lines.push(Line::from(vec![Span::styled(
-                    text.to_string(),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-            }
-            // Handle bullet points
-            else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-                let text = &trimmed[2..];
-                lines.push(Line::from(vec![
-                    Span::styled("• ", Style::default().fg(Color::Green)),
-                    Span::raw(text.to_string()),
-                ]));
-            }
-            // Handle numbered lists
-            else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
-                && trimmed.contains(". ")
-            {
-                if let Some(dot_pos) = trimmed.find(". ") {
-                    let number = &trimmed[..dot_pos + 1];
-                    let text = &trimmed[dot_pos + 2..];
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{number} "), Style::default().fg(Color::Magenta)),
-                        Span::raw(text.to_string()),
-                    ]));
-                } else {
-                    lines.push(Line::from(trimmed.to_string()));
-                }
-            }
-            // Handle bold text (basic **text** parsing)
-            else if trimmed.contains("**") {
-                let styled_line = Self::parse_bold_text(trimmed);
-                lines.push(styled_line);
-            }
-            // Handle italic text (basic *text* parsing)
-            else if trimmed.contains('*') && !trimmed.starts_with("*") {
-                let styled_line = Self::parse_italic_text(trimmed);
-                lines.push(styled_line);
-            }
-            // Handle code blocks or inline code
-            else if trimmed.starts_with("```") {
-                lines.push(Line::from(vec![Span::styled(
-                    trimmed.to_string(),
-                    Style::default().fg(Color::Gray).bg(Color::DarkGray),
-                )]));
-            } else if trimmed.contains('`') {
-                let styled_line = Self::parse_inline_code(trimmed);
-                lines.push(styled_line);
-            }
-            // Regular text
-            else {
-                lines.push(Line::from(trimmed.to_string()));
-            }
-        }
-
-        // Remove trailing empty lines to reduce blank space
-        while let Some(last_line) = lines.last() {
-            if last_line.spans.is_empty()
-                || (last_line.spans.len() == 1 && last_line.spans[0].content.is_empty())
-            {
-                lines.pop();
-            } else {
-                break;
-            }
-        }
-
-        lines
-    }
-
-    /// Parse bold text (**text**)
-    fn parse_bold_text(text: &str) -> Line<'static> {
-        let mut spans = Vec::new();
-        let mut current = String::new();
-        let mut in_bold = false;
-        let mut chars = text.chars().peekable();
-
-        while let Some(ch) = chars.next() {
-            if ch == '*' && chars.peek() == Some(&'*') {
-                chars.next(); // consume second *
-                if !current.is_empty() {
-                    spans.push(if in_bold {
-                        Span::styled(
-                            current.clone(),
-                            Style::default().add_modifier(Modifier::BOLD),
-                        )
-                    } else {
-                        Span::raw(current.clone())
-                    });
-                    current.clear();
-                }
-                in_bold = !in_bold;
-            } else {
-                current.push(ch);
-            }
-        }
-
-        if !current.is_empty() {
-            spans.push(if in_bold {
-                Span::styled(current, Style::default().add_modifier(Modifier::BOLD))
-            } else {
-                Span::raw(current)
-            });
-        }
-
-        Line::from(spans)
-    }
-
-    /// Parse italic text (*text*)
-    fn parse_italic_text(text: &str) -> Line<'static> {
-        let mut spans = Vec::new();
-        let mut current = String::new();
-        let mut in_italic = false;
-
-        for ch in text.chars() {
-            if ch == '*' && !in_italic {
-                if !current.is_empty() {
-                    spans.push(Span::raw(current.clone()));
-                    current.clear();
-                }
-                in_italic = true;
-            } else if ch == '*' && in_italic {
-                if !current.is_empty() {
-                    spans.push(Span::styled(
-                        current.clone(),
-                        Style::default().add_modifier(Modifier::ITALIC),
-                    ));
-                    current.clear();
-                }
-                in_italic = false;
-            } else {
-                current.push(ch);
-            }
-        }
-
-        if !current.is_empty() {
-            spans.push(if in_italic {
-                Span::styled(current, Style::default().add_modifier(Modifier::ITALIC))
-            } else {
-                Span::raw(current)
-            });
-        }
-
-        Line::from(spans)
-    }
-
-    /// Parse inline code (`code`)
-    fn parse_inline_code(text: &str) -> Line<'static> {
-        let mut spans = Vec::new();
-        let mut current = String::new();
-        let mut in_code = false;
-
-        for ch in text.chars() {
-            if ch == '`' {
-                if !current.is_empty() {
-                    spans.push(if in_code {
-                        Span::styled(
-                            current.clone(),
-                            Style::default().fg(Color::Green).bg(Color::DarkGray),
-                        )
-                    } else {
-                        Span::raw(current.clone())
-                    });
-                    current.clear();
-                }
-                in_code = !in_code;
-            } else {
-                current.push(ch);
-            }
-        }
-
-        if !current.is_empty() {
-            spans.push(if in_code {
-                Span::styled(
-                    current,
-                    Style::default().fg(Color::Green).bg(Color::DarkGray),
-                )
-            } else {
-                Span::raw(current)
-            });
-        }
-
-        Line::from(spans)
-    }
 
     fn render_comments_section(&self, frame: &mut Frame, area: Rect) {
         let mut lines = Vec::new();
