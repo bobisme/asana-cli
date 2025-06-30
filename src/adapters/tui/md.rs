@@ -55,20 +55,35 @@ fn fix_nested_lists(html: &str) -> String {
     document.to_string()
 }
 
+/// Convert <pre> tags to <pre><code> for proper code block conversion
+fn wrap_pre_with_code(html: &str) -> String {
+    // Simple approach: replace <pre> with <pre><code> and </pre> with </code></pre>
+    let mut result = html.to_string();
+    result = result.replace("<pre>", "<pre><code>");
+    result = result.replace("</pre>", "</code></pre>");
+    result
+}
+
 /// Convert HTML description to markdown for better TUI rendering
 pub fn html_to_markdown(html: &str) -> String {
     if html.trim().is_empty() {
         return String::new();
     }
 
-    // First fix any invalid nested list structures
-    let fixed_html = fix_nested_lists(html);
+    // First wrap <pre> tags with <code> for proper code block conversion
+    let pre_wrapped = wrap_pre_with_code(html);
+    
+    // Then fix any invalid nested list structures
+    let fixed_html = fix_nested_lists(&pre_wrapped);
 
-    // Configure htmd options to reduce aggressive spacing
+    // Configure htmd options to reduce aggressive spacing and handle code blocks
     let options = htmd::options::Options {
         // Reduce the aggressive spacing htmd uses by default
         ul_bullet_spacing: 1,  // Default is 3, use 1 for "* item" instead of "*   item"
         ol_number_spacing: 1,  // Default is likely 2-3, use 1 for "1. item" instead of "1.  item"
+        // Configure code blocks to use fence style with backticks
+        code_block_style: htmd::options::CodeBlockStyle::Fenced,
+        code_block_fence: htmd::options::CodeBlockFence::Backticks,
         ..Default::default()
     };
 
@@ -215,3 +230,29 @@ fn parse_inline_code(text: &str) -> Line<'static> {
     Line::from(spans)
 }
 */
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_pre_tag_conversion() {
+        let html = r#"<h2>Test</h2>
+<p>Here is some code:</p>
+<pre>select os.id, os.posted_at, os.external_status
+from backend.carrier_statement cs
+where 1 = 1</pre>
+<p>After the code</p>"#;
+
+        let result = html_to_markdown(html);
+        println!("Final markdown:");
+        println!("{}", result);
+        println!("\n--- Each line ---");
+        for (i, line) in result.lines().enumerate() {
+            println!("{}: {:?}", i, line);
+        }
+        
+        // Check that the SQL code is preserved
+        assert!(result.contains("select os.id"));
+    }
+}
