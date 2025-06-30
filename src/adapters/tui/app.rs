@@ -22,7 +22,7 @@ pub enum AppMode {
     Help,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FocusedPane {
     Search,
     TaskList,    // Left pane
@@ -42,6 +42,7 @@ pub struct App {
     // UI State
     mode: AppMode,
     focused_pane: FocusedPane,
+    fullscreen_pane: Option<FocusedPane>,
 
     // Search
     search_bar: SearchBar,
@@ -94,6 +95,7 @@ impl App {
             state_manager,
             mode: AppMode::Main,
             focused_pane: FocusedPane::TaskList,
+            fullscreen_pane: None,
             search_bar: SearchBar::new(),
             search_query: String::new(),
             tasks: Vec::new(),
@@ -492,6 +494,22 @@ impl App {
                             }
                         }
                     }
+                    'f' => {
+                        if self.focused_pane == FocusedPane::Search {
+                            self.search_bar.insert_char(c);
+                            self.search_query = self.search_bar.query().to_string();
+                            self.update_filtered_tasks();
+                        } else {
+                            // Toggle fullscreen for current focused pane
+                            if self.fullscreen_pane == Some(self.focused_pane) {
+                                // Exit fullscreen
+                                self.fullscreen_pane = None;
+                            } else {
+                                // Enter fullscreen for current pane
+                                self.fullscreen_pane = Some(self.focused_pane);
+                            }
+                        }
+                    }
                     _ => {
                         // Regular character input for search
                         if self.focused_pane == FocusedPane::Search {
@@ -634,52 +652,165 @@ impl App {
     }
 
     pub fn render(&mut self, frame: &mut Frame) {
-        let main_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Search bar
-                Constraint::Min(0),    // Main content (split left/right)
-                Constraint::Length(1), // Status bar
-            ])
-            .split(frame.area());
+        // Check if we're in fullscreen mode
+        if let Some(fullscreen_pane) = self.fullscreen_pane {
+            // Render fullscreen pane without borders, using entire frame area
+            match fullscreen_pane {
+                FocusedPane::Search => {
+                    // For search fullscreen, still show search bar at top
+                    let chunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(3), // Search bar
+                            Constraint::Min(0),    // Rest for search results or empty
+                        ])
+                        .split(frame.area());
 
-        // Render search bar
-        self.search_bar.render(frame, main_chunks[0]);
+                    self.search_bar.render(frame, chunks[0]);
+                    // Could render search results or help text in chunks[1] if needed
+                }
+                FocusedPane::TaskList => {
+                    self.render_task_list_fullscreen(frame, frame.area());
+                }
+                FocusedPane::Description => {
+                    self.render_description_fullscreen(frame, frame.area());
+                }
+                FocusedPane::Comments => {
+                    self.render_comments_fullscreen(frame, frame.area());
+                }
+            }
+        } else {
+            // Normal 3-pane layout
+            let main_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Length(3), // Search bar
+                    Constraint::Min(0),    // Main content (split left/right)
+                    Constraint::Length(1), // Status bar
+                ])
+                .split(frame.area());
 
-        // Split main content area: task list (left) | right side
-        let content_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(40), // Task list (left pane)
-                Constraint::Percentage(60), // Right side (description + comments)
-            ])
-            .split(main_chunks[1]);
+            // Render search bar
+            self.search_bar.render(frame, main_chunks[0]);
 
-        // Render task list (left pane)
-        self.render_task_list(frame, content_chunks[0]);
+            // Split main content area: task list (left) | right side
+            let content_chunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([
+                    Constraint::Percentage(40), // Task list (left pane)
+                    Constraint::Percentage(60), // Right side (description + comments)
+                ])
+                .split(main_chunks[1]);
 
-        // Split right side vertically: description (top) | comments (bottom)
-        let right_chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Percentage(50), // Description pane
-                Constraint::Percentage(50), // Comments pane
-            ])
-            .split(content_chunks[1]);
+            // Render task list (left pane)
+            self.render_task_list(frame, content_chunks[0]);
 
-        // Render description pane (right top)
-        self.render_description_pane_standalone(frame, right_chunks[0]);
+            // Split right side vertically: description (top) | comments (bottom)
+            let right_chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(50), // Description pane
+                    Constraint::Percentage(50), // Comments pane
+                ])
+                .split(content_chunks[1]);
 
-        // Render comments pane (right bottom)
-        self.render_comments_pane_standalone(frame, right_chunks[1]);
+            // Render description pane (right top)
+            self.render_description_pane_standalone(frame, right_chunks[0]);
 
-        // Render status bar
-        self.render_status_bar(frame, main_chunks[2]);
+            // Render comments pane (right bottom)
+            self.render_comments_pane_standalone(frame, right_chunks[1]);
 
-        // Render help modal if active
-        if matches!(self.mode, AppMode::Help) {
-            self.render_help(frame);
+            // Render status bar
+            self.render_status_bar(frame, main_chunks[2]);
+
+            // Render help modal if active
+            if matches!(self.mode, AppMode::Help) {
+                self.render_help(frame);
+            }
         }
+    }
+
+    // Fullscreen render methods (without borders)
+    fn render_task_list_fullscreen(&mut self, frame: &mut Frame, area: Rect) {
+        if self.is_loading {
+            let paragraph =
+                Paragraph::new("Loading tasks...").style(Style::default().fg(Color::Gray));
+            frame.render_widget(paragraph, area);
+            return;
+        }
+
+        if let Some(error) = &self.error_message {
+            let paragraph = Paragraph::new(error.as_str()).style(Style::default().fg(Color::Red));
+            frame.render_widget(paragraph, area);
+            return;
+        }
+
+        if self.filtered_tasks.is_empty() {
+            let paragraph =
+                Paragraph::new("No tasks found").style(Style::default().fg(Color::Gray));
+            frame.render_widget(paragraph, area);
+            return;
+        }
+
+        let header_cells = ["Name", "Status", "Due Date"]
+            .iter()
+            .map(|h| Cell::from(*h).style(Style::default().fg(Color::Yellow)));
+        let header = Row::new(header_cells).height(1);
+
+        let rows: Vec<Row> = self
+            .filtered_tasks
+            .iter()
+            .map(|task| {
+                let (status_text, _) = task.status_display();
+                let due_text = task.due_date_display();
+                let due_style = if task.is_overdue() {
+                    Style::default().fg(Color::Red)
+                } else {
+                    Style::default()
+                };
+                Row::new([
+                    Cell::from(task.name.as_str()),
+                    Cell::from(status_text),
+                    Cell::from(due_text).style(due_style),
+                ])
+            })
+            .collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Percentage(50),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ],
+        )
+        .header(header)
+        .row_highlight_style(Style::default().bg(Color::Blue))
+        .highlight_symbol(">> ");
+
+        frame.render_stateful_widget(table, area, &mut self.task_list_state);
+    }
+
+    fn render_description_fullscreen(&mut self, frame: &mut Frame, area: Rect) {
+        if let Some(task) = self.current_task.clone() {
+            self.render_description_content_only(frame, area, &task);
+        } else if let Some(selected_index) = self.task_list_state.selected() {
+            if let Some(task) = self.filtered_tasks.get(selected_index).cloned() {
+                self.render_description_content_only(frame, area, &task);
+            } else {
+                let paragraph =
+                    Paragraph::new("No task selected").style(Style::default().fg(Color::Gray));
+                frame.render_widget(paragraph, area);
+            }
+        } else {
+            let paragraph =
+                Paragraph::new("No task selected").style(Style::default().fg(Color::Gray));
+            frame.render_widget(paragraph, area);
+        }
+    }
+
+    fn render_comments_fullscreen(&mut self, frame: &mut Frame, area: Rect) {
+        self.render_comments_content_only(frame, area);
     }
 
     /// Auto-load task details when selection changes
@@ -900,22 +1031,8 @@ impl App {
             if let Some(description) = &task.description {
                 if !description.trim().is_empty() {
                     let markdown_desc = md::html_to_markdown(description);
-                    let mut styled_lines =
+                    let styled_lines =
                         md::parse_markdown_to_marked_lines(&markdown_desc, Some(area.width));
-
-                    // Add description header
-                    styled_lines.insert(
-                        0,
-                        md::MarkdownLine {
-                            line: Line::from(vec![Span::styled(
-                                "Description:",
-                                Style::default()
-                                    .fg(Color::Cyan)
-                                    .add_modifier(Modifier::BOLD),
-                            )]),
-                            is_code_block: false,
-                        },
-                    );
 
                     lines.extend(styled_lines);
                 }
@@ -1177,7 +1294,7 @@ impl App {
             ],
         )
         .block(block)
-        .highlight_style(Style::default().bg(Color::DarkGray))
+        .row_highlight_style(Style::default().bg(Color::DarkGray))
         .highlight_symbol("");
 
         frame.render_stateful_widget(table, area, &mut self.task_list_state);
@@ -1185,10 +1302,10 @@ impl App {
 
     fn render_status_bar(&self, frame: &mut Frame, area: Rect) {
         let help_text = match self.focused_pane {
-            FocusedPane::Search => "Tab: switch to tasks | Enter: go to tasks | /: focus search | q: quit | ?: help",
-            FocusedPane::TaskList => "j/k: navigate | Tab: switch panes | Space: toggle complete | /: search | q: quit | ?: help",
-            FocusedPane::Description => "j/k: scroll | Tab: next pane | q: quit | ?: help",
-            FocusedPane::Comments => "j/k: scroll | Tab: next pane | q: quit | ?: help",
+            FocusedPane::Search => "Tab: switch to tasks | Enter: go to tasks | /: focus search | f: fullscreen | q: quit | ?: help",
+            FocusedPane::TaskList => "j/k: navigate | Tab: switch panes | Space: toggle complete | /: search | f: fullscreen | q: quit | ?: help",
+            FocusedPane::Description => "j/k: scroll | Tab: next pane | f: fullscreen | q: quit | ?: help",
+            FocusedPane::Comments => "j/k: scroll | Tab: next pane | f: fullscreen | q: quit | ?: help",
         };
 
         let paragraph = Paragraph::new(help_text).style(Style::default().fg(Color::DarkGray));
@@ -1496,18 +1613,7 @@ impl App {
         if let Some(description) = &task.description {
             if !description.trim().is_empty() {
                 let markdown_desc = md::html_to_markdown(description);
-                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
-
-                // Add description header
-                styled_lines.insert(
-                    0,
-                    Line::from(vec![Span::styled(
-                        "Description:",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )]),
-                );
+                let styled_lines = md::parse_markdown_to_lines(&markdown_desc);
 
                 lines.extend(styled_lines);
             }
@@ -1694,18 +1800,7 @@ impl App {
                 let markdown_desc = md::html_to_markdown(description);
 
                 // Parse and render markdown with custom styling
-                let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
-
-                // Prepend "Description:" as the first line instead of using a block
-                styled_lines.insert(
-                    0,
-                    Line::from(vec![Span::styled(
-                        "Description:",
-                        Style::default()
-                            .fg(Color::Cyan)
-                            .add_modifier(Modifier::BOLD),
-                    )]),
-                );
+                let styled_lines = md::parse_markdown_to_lines(&markdown_desc);
 
                 let paragraph = Paragraph::new(styled_lines).wrap(Wrap { trim: false });
 
