@@ -102,6 +102,58 @@ pub fn html_to_markdown(html: &str) -> String {
     }
 }
 
+/// Preprocess markdown to handle cases where htmd outputs 4-space indented lines
+/// that aren't meant to be code blocks
+fn preprocess_markdown(markdown: &str) -> String {
+    let mut result = Vec::new();
+    let mut in_code_block = false;
+    let mut prev_was_blank = true;
+
+    for line in markdown.lines() {
+        // Check if we're entering or leaving a code block
+        if line.trim().starts_with("```") || line.trim().starts_with("~~~") {
+            in_code_block = !in_code_block;
+            result.push(line.to_string());
+            prev_was_blank = false;
+            continue;
+        }
+
+        // If we're in a code block, don't process the line
+        if in_code_block {
+            result.push(line.to_string());
+            prev_was_blank = false;
+            continue;
+        }
+
+        // Check if this line starts with exactly 4 spaces
+        if line.starts_with("    ") && !line.starts_with("     ") {
+            // This might be a false code block from htmd
+            // Only treat as code if previous line was blank and next content looks like code
+            let trimmed = line.trim();
+
+            // Heuristic: if it looks like prose (has multiple words, punctuation),
+            // it's probably not meant to be code
+            let looks_like_prose = trimmed.split_whitespace().count() > 5
+                || trimmed.contains(". ")
+                || trimmed.contains(", ");
+
+            if looks_like_prose || !prev_was_blank {
+                // Convert to non-indented line
+                result.push(line.trim_start().to_string());
+            } else {
+                // Keep as-is, it might be actual code
+                result.push(line.to_string());
+            }
+        } else {
+            result.push(line.to_string());
+        }
+
+        prev_was_blank = line.trim().is_empty();
+    }
+
+    result.join("\n")
+}
+
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
     use ratatui::style::{Color, Modifier, Style};
@@ -110,9 +162,14 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
 
     let mut lines = Vec::new();
 
+    // Preprocess markdown to handle htmd's 4-space indentation
+    // htmd sometimes indents content with 4 spaces which minimad interprets as code blocks
+    // We'll detect these cases and convert them to regular paragraphs
+    let preprocessed = preprocess_markdown(markdown);
+
     // Parse markdown with minimad
     let options = minimad::Options::default();
-    let md_lines = minimad::parse_text(markdown, options);
+    let md_lines = minimad::parse_text(&preprocessed, options);
 
     // Convert each parsed line
     for md_line in md_lines.lines {
@@ -147,12 +204,11 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                         }
                     }
                     CompositeStyle::ListItem(depth) => {
-                        // Add bullet point or number
-                        let indent = "  ".repeat(*depth as usize);
-                        spans.push(Span::styled(
-                            format!("{}• ", indent),
-                            Style::default().fg(Color::Yellow),
-                        ));
+                        // Add bullet point or number with proper indentation
+                        // depth is the number of spaces, so divide by 2 for indent level
+                        let indent_level = (*depth as usize) / 2;
+                        let indent = "  ".repeat(indent_level);
+                        spans.push(Span::styled(format!("{}• ", indent), Style::default()));
 
                         // Add the list item content
                         for compound in &composite.compounds {
@@ -175,12 +231,11 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                         }
                     }
                     CompositeStyle::Code => {
-                        // Code block style
-                        spans.push(Span::styled("    ", Style::default()));
+                        // Code block style - no indent, black background
                         for compound in &composite.compounds {
                             spans.push(Span::styled(
                                 compound.src.to_string(),
-                                Style::default().fg(Color::Green),
+                                Style::default().bg(Color::Black),
                             ));
                         }
                     }
@@ -244,10 +299,10 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                     // Skip fence markers
                     continue;
                 } else {
-                    // Code content - indent and color
+                    // Code content - no indent, black background
                     spans.push(Span::styled(
-                        format!("    {}", line_content),
-                        Style::default().fg(Color::Green),
+                        line_content,
+                        Style::default().bg(Color::Black),
                     ));
                 }
             }
@@ -421,6 +476,87 @@ where 1 = 1</pre>
     }
 
     #[test]
+    fn test_nested_lists() {
+        let markdown = r#"# Nested Lists Test
+
+* Top level item 1
+  * Nested item 1.1
+  * Nested item 1.2
+    * Double nested item 1.2.1
+    * Double nested item 1.2.2
+  * Nested item 1.3
+* Top level item 2
+  * Nested item 2.1
+* Top level item 3"#;
+
+        // First, let's see what minimad parses directly
+        use termimad::minimad;
+        let options = minimad::Options::default();
+        let md_lines = minimad::parse_text(markdown, options);
+
+        println!("\n=== Direct minimad parsing ===");
+        for (i, line) in md_lines.lines.iter().enumerate() {
+            if let minimad::Line::Normal(composite) = line {
+                if let minimad::CompositeStyle::ListItem(depth) = &composite.style {
+                    let content: String = composite.compounds.iter().map(|c| c.src).collect();
+                    println!(
+                        "Line {}: ListItem depth={}, content={:?}",
+                        i, depth, content
+                    );
+                }
+            }
+        }
+
+        let lines = parse_markdown_to_lines(markdown);
+
+        println!("\n=== Nested Lists Test ===");
+        println!("Input markdown has {} chars", markdown.len());
+        println!("Parsed into {} lines", lines.len());
+
+        // Track depths we've seen
+        let mut depths_seen = Vec::new();
+
+        for (i, line) in lines.iter().enumerate() {
+            println!("\nLine {}: {} spans", i, line.spans.len());
+
+            // Check if this is a list item by looking for bullet point
+            if line.spans.len() > 0 {
+                let first_span_content = &line.spans[0].content;
+
+                // Count leading spaces to determine depth
+                let leading_spaces = first_span_content.chars().take_while(|&c| c == ' ').count();
+                let depth = leading_spaces / 2;
+
+                if first_span_content.contains("• ") {
+                    println!(
+                        "  -> List item at depth {} (leading spaces: {})",
+                        depth, leading_spaces
+                    );
+                    depths_seen.push(depth);
+
+                    // Print the actual content
+                    let content: String = line
+                        .spans
+                        .iter()
+                        .map(|span| span.content.to_string())
+                        .collect();
+                    println!("  -> Full content: {:?}", content);
+                }
+            }
+
+            for (j, span) in line.spans.iter().enumerate() {
+                println!("  Span {}: {:?} -> {:?}", j, span.content, span.style);
+            }
+        }
+
+        // Verify we have list items at different depths
+        println!("\nDepths seen: {:?}", depths_seen);
+        assert!(depths_seen.contains(&0), "Should have depth 0 items");
+        assert!(depths_seen.contains(&1), "Should have depth 1 items");
+        assert!(depths_seen.contains(&2), "Should have depth 2 items");
+    }
+
+    #[test]
     fn test_markdown_rendering() {
         let markdown = r#"# Header 1
 ## Header 2
@@ -430,13 +566,21 @@ Regular text with **bold** and *italic* and `inline code`.
 
 * List item 1
 * List item 2 with **bold**
+  * Nested item 1
+  * Nested item 2
+    * Double nested
 * List item 3 with `code`
+
+    This is indented with 4 spaces but should not be code.
 
 ```rust
 fn main() {
     println!("Hello!");
 }
 ```
+
+    x = 1
+    y = 2
 
 > Quote text
 
@@ -459,5 +603,25 @@ fn main() {
         assert!(lines.len() > 0);
         // Should have headers, list items, code blocks, etc
         assert!(lines.len() >= 10);
+
+        // Debug list item rendering
+        println!("\n=== List Item Debug ===");
+        let debug_lines =
+            termimad::minimad::parse_text(markdown, termimad::minimad::Options::default());
+        for (i, line) in debug_lines.lines.iter().enumerate() {
+            match line {
+                termimad::minimad::Line::Normal(composite) => match &composite.style {
+                    termimad::minimad::CompositeStyle::ListItem(depth) => {
+                        let content: String = composite.compounds.iter().map(|c| c.src).collect();
+                        println!(
+                            "Line {}: ListItem depth={} content=\"{}\"",
+                            i, depth, content
+                        );
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
     }
 }
