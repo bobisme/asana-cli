@@ -55,40 +55,6 @@ fn fix_nested_lists(html: &str) -> String {
     document.to_string()
 }
 
-/// Replace <img> tags with placeholder text
-fn replace_images_with_placeholders(html: &str) -> String {
-    let document = kuchiki::parse_html().one(html);
-
-    // Find all img elements
-    if let Ok(img_selector) = document.select("img") {
-        for img_ref in img_selector {
-            let img_node = img_ref.as_node();
-
-            // Get alt text if available
-            let alt_text = if let Some(element) = img_node.as_element() {
-                element
-                    .attributes
-                    .borrow()
-                    .get("alt")
-                    .map(|s| s.to_string())
-                    .unwrap_or_else(|| "image".to_string())
-            } else {
-                "image".to_string()
-            };
-
-            // Create placeholder text node
-            let placeholder_text = format!("[Image: {}]", alt_text);
-            let text_node = kuchiki::NodeRef::new_text(placeholder_text);
-
-            // Replace img with text node
-            img_node.insert_before(text_node);
-            img_node.detach();
-        }
-    }
-
-    document.to_string()
-}
-
 /// Convert <pre> tags to <pre><code> for proper code block conversion
 fn wrap_pre_with_code(html: &str) -> String {
     // Simple approach: replace <pre> with <pre><code> and </pre> with </code></pre>
@@ -98,17 +64,77 @@ fn wrap_pre_with_code(html: &str) -> String {
     result
 }
 
+/// Replace markdown image syntax ![alt](url) with [Image: alt]
+fn replace_markdown_images(markdown: &str) -> String {
+    let mut result = String::new();
+    let mut chars = markdown.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch == '!' && chars.peek() == Some(&'[') {
+            // Found potential image syntax
+            chars.next(); // consume '['
+
+            // Extract alt text
+            let mut alt_text = String::new();
+            let mut found_closing = false;
+
+            while let Some(ch) = chars.next() {
+                if ch == ']' {
+                    found_closing = true;
+                    break;
+                }
+                alt_text.push(ch);
+            }
+
+            if found_closing && chars.peek() == Some(&'(') {
+                // This is an image, consume the URL part
+                chars.next(); // consume '('
+
+                let mut depth = 1;
+                while let Some(ch) = chars.next() {
+                    if ch == '(' {
+                        depth += 1;
+                    } else if ch == ')' {
+                        depth -= 1;
+                        if depth == 0 {
+                            break;
+                        }
+                    }
+                }
+
+                // Add placeholder
+                if alt_text.is_empty() {
+                    result.push_str("[Image]");
+                } else {
+                    result.push_str("[Image: ");
+                    result.push_str(&alt_text);
+                    result.push(']');
+                }
+            } else {
+                // Not an image, restore what we consumed
+                result.push('!');
+                result.push('[');
+                result.push_str(&alt_text);
+                if found_closing {
+                    result.push(']');
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+
+    result
+}
+
 /// Convert HTML description to markdown for better TUI rendering
 pub fn html_to_markdown(html: &str) -> String {
     if html.trim().is_empty() {
         return String::new();
     }
 
-    // First replace images with placeholders
-    let img_replaced = replace_images_with_placeholders(html);
-
-    // Then wrap <pre> tags with <code> for proper code block conversion
-    let pre_wrapped = wrap_pre_with_code(&img_replaced);
+    // First wrap <pre> tags with <code> for proper code block conversion
+    let pre_wrapped = wrap_pre_with_code(html);
 
     // Then fix any invalid nested list structures
     let fixed_html = fix_nested_lists(&pre_wrapped);
@@ -129,8 +155,9 @@ pub fn html_to_markdown(html: &str) -> String {
 
     match converter.convert(&fixed_html) {
         Ok(markdown) => {
-            // Clean up extra whitespace and newlines
-            markdown.trim().to_string()
+            // Replace markdown image syntax with placeholders
+            let result = replace_markdown_images(&markdown);
+            result.trim().to_string()
         }
         Err(_) => {
             // Fallback to original HTML if conversion fails
@@ -660,5 +687,49 @@ fn main() {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn test_replace_markdown_images() {
+        // Test basic image replacement
+        assert_eq!(
+            replace_markdown_images("![alt text](image.png)"),
+            "[Image: alt text]"
+        );
+
+        // Test empty alt text
+        assert_eq!(replace_markdown_images("![](image.png)"), "[Image]");
+
+        // Test image in text
+        assert_eq!(
+            replace_markdown_images("Here is an image: ![screenshot](shot.png) in the text"),
+            "Here is an image: [Image: screenshot] in the text"
+        );
+
+        // Test multiple images
+        assert_eq!(
+            replace_markdown_images("![first](1.png) and ![second](2.png)"),
+            "[Image: first] and [Image: second]"
+        );
+
+        // Test non-image brackets
+        assert_eq!(
+            replace_markdown_images("This is [a link](url) not an image"),
+            "This is [a link](url) not an image"
+        );
+
+        // Test escaped brackets
+        assert_eq!(
+            replace_markdown_images("This is not ![ an image"),
+            "This is not ![ an image"
+        );
+    }
+
+    #[test]
+    fn test_html_to_markdown_with_images() {
+        let html = r#"<p>Text with <img src="test.png" alt="test image"> inline</p>"#;
+        let result = html_to_markdown(html);
+        assert!(result.contains("[Image: test image]"));
+        assert!(!result.contains("!["));
     }
 }
