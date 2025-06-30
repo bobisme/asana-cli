@@ -7,19 +7,19 @@ use ratatui::text::Line;
 /// We pre-process the HTML to correct the structure before converting to Markdown.
 fn fix_nested_lists(html: &str) -> String {
     let document = kuchiki::parse_html().one(html);
-    
+
     // Find all <ul> and <ol> elements
     let list_selector = match document.select("ul, ol") {
         Ok(selector) => selector,
         Err(_) => return html.to_string(), // Return original if selector fails
     };
-    
+
     // Collect nodes to fix (we can't modify while iterating)
     let mut fixes_needed = Vec::new();
-    
+
     for list_ref in list_selector {
         let list_node = list_ref.as_node();
-        
+
         // Check if parent is also a list (ul or ol)
         if let Some(parent) = list_node.parent() {
             if let Some(element) = parent.as_element() {
@@ -42,7 +42,7 @@ fn fix_nested_lists(html: &str) -> String {
             }
         }
     }
-    
+
     // Apply the fixes
     for (list_node, li_node) in fixes_needed {
         // Detach the list from its current position
@@ -50,7 +50,7 @@ fn fix_nested_lists(html: &str) -> String {
         // Append it to the preceding <li>
         li_node.append(list_node);
     }
-    
+
     // Return the fixed HTML
     document.to_string()
 }
@@ -72,15 +72,15 @@ pub fn html_to_markdown(html: &str) -> String {
 
     // First wrap <pre> tags with <code> for proper code block conversion
     let pre_wrapped = wrap_pre_with_code(html);
-    
+
     // Then fix any invalid nested list structures
     let fixed_html = fix_nested_lists(&pre_wrapped);
 
     // Configure htmd options to reduce aggressive spacing and handle code blocks
     let options = htmd::options::Options {
         // Reduce the aggressive spacing htmd uses by default
-        ul_bullet_spacing: 1,  // Default is 3, use 1 for "* item" instead of "*   item"
-        ol_number_spacing: 1,  // Default is likely 2-3, use 1 for "1. item" instead of "1.  item"
+        ul_bullet_spacing: 1, // Default is 3, use 1 for "* item" instead of "*   item"
+        ol_number_spacing: 1, // Default is likely 2-3, use 1 for "1. item" instead of "1.  item"
         // Configure code blocks to use fence style with backticks
         code_block_style: htmd::options::CodeBlockStyle::Fenced,
         code_block_fence: htmd::options::CodeBlockFence::Backticks,
@@ -88,10 +88,8 @@ pub fn html_to_markdown(html: &str) -> String {
     };
 
     // Convert HTML to markdown using htmd with custom options
-    let converter = htmd::HtmlToMarkdown::builder()
-        .options(options)
-        .build();
-        
+    let converter = htmd::HtmlToMarkdown::builder().options(options).build();
+
     match converter.convert(&fixed_html) {
         Ok(markdown) => {
             // Clean up extra whitespace and newlines
@@ -104,50 +102,121 @@ pub fn html_to_markdown(html: &str) -> String {
     }
 }
 
-
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
-    use termimad::minimad;
-    use ratatui::text::Span;
     use ratatui::style::{Color, Modifier, Style};
-    
+    use ratatui::text::Span;
+    use termimad::minimad;
+
     let mut lines = Vec::new();
-    
+
     // Parse markdown with minimad
     let options = minimad::Options::default();
     let md_lines = minimad::parse_text(markdown, options);
-    
+
     // Convert each parsed line
     for md_line in md_lines.lines {
         let mut spans = Vec::new();
-        
+
         // Process the line based on its type
         match &md_line {
             minimad::Line::Normal(composite) => {
-                for compound in &composite.compounds {
-                    let mut style = Style::default();
-                    
-                    // Apply bold
-                    if compound.bold {
-                        style = style.add_modifier(Modifier::BOLD);
+                // Check the composite style to determine line type
+                use termimad::minimad::CompositeStyle;
+
+                match &composite.style {
+                    CompositeStyle::Header(level) => {
+                        // Style headers based on level
+                        let header_style = match level {
+                            1 => Style::default()
+                                .fg(Color::Cyan)
+                                .add_modifier(Modifier::BOLD),
+                            2 => Style::default()
+                                .fg(Color::Blue)
+                                .add_modifier(Modifier::BOLD),
+                            3 => Style::default()
+                                .fg(Color::Magenta)
+                                .add_modifier(Modifier::BOLD),
+                            _ => Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        };
+
+                        for compound in &composite.compounds {
+                            spans.push(Span::styled(compound.src.to_string(), header_style));
+                        }
                     }
-                    
-                    // Apply italic
-                    if compound.italic {
-                        style = style.add_modifier(Modifier::ITALIC);
+                    CompositeStyle::ListItem(depth) => {
+                        // Add bullet point or number
+                        let indent = "  ".repeat(*depth as usize);
+                        spans.push(Span::styled(
+                            format!("{}• ", indent),
+                            Style::default().fg(Color::Yellow),
+                        ));
+
+                        // Add the list item content
+                        for compound in &composite.compounds {
+                            let mut style = Style::default();
+
+                            if compound.bold {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+                            if compound.italic {
+                                style = style.add_modifier(Modifier::ITALIC);
+                            }
+                            if compound.strikeout {
+                                style = style.add_modifier(Modifier::CROSSED_OUT);
+                            }
+                            if compound.code {
+                                style = style.fg(Color::Green).bg(Color::Black);
+                            }
+
+                            spans.push(Span::styled(compound.src.to_string(), style));
+                        }
                     }
-                    
-                    // Apply strikethrough
-                    if compound.strikeout {
-                        style = style.add_modifier(Modifier::CROSSED_OUT);
+                    CompositeStyle::Code => {
+                        // Code block style
+                        spans.push(Span::styled("    ", Style::default()));
+                        for compound in &composite.compounds {
+                            spans.push(Span::styled(
+                                compound.src.to_string(),
+                                Style::default().fg(Color::Green),
+                            ));
+                        }
                     }
-                    
-                    // Apply code style
-                    if compound.code {
-                        style = style.fg(Color::Green).bg(Color::Black);
+                    CompositeStyle::Quote => {
+                        // Quote style
+                        spans.push(Span::styled("│ ", Style::default().fg(Color::Gray)));
+                        for compound in &composite.compounds {
+                            spans.push(Span::styled(
+                                compound.src.to_string(),
+                                Style::default()
+                                    .fg(Color::Gray)
+                                    .add_modifier(Modifier::ITALIC),
+                            ));
+                        }
                     }
-                    
-                    spans.push(Span::styled(compound.src.to_string(), style));
+                    _ => {
+                        // Regular paragraph text
+                        for compound in &composite.compounds {
+                            let mut style = Style::default();
+
+                            if compound.bold {
+                                style = style.add_modifier(Modifier::BOLD);
+                            }
+                            if compound.italic {
+                                style = style.add_modifier(Modifier::ITALIC);
+                            }
+                            if compound.strikeout {
+                                style = style.add_modifier(Modifier::CROSSED_OUT);
+                            }
+                            if compound.code {
+                                style = style.fg(Color::Green).bg(Color::Black);
+                            }
+
+                            spans.push(Span::styled(compound.src.to_string(), style));
+                        }
+                    }
                 }
             }
             minimad::Line::TableRow(row) => {
@@ -162,10 +231,22 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                 }
             }
             minimad::Line::CodeFence(ref composite) => {
-                // Code block with green text
-                for compound in &composite.compounds {
+                // Code fence line (could be opening/closing fence or code content)
+                // Check if this is a fence marker (``` or ~~~) or actual code
+                let line_content = composite
+                    .compounds
+                    .iter()
+                    .map(|c| c.src)
+                    .collect::<String>();
+
+                if line_content.trim().starts_with("```") || line_content.trim().starts_with("~~~")
+                {
+                    // Skip fence markers
+                    continue;
+                } else {
+                    // Code content - indent and color
                     spans.push(Span::styled(
-                        format!("    {}", compound.src),
+                        format!("    {}", line_content),
                         Style::default().fg(Color::Green),
                     ));
                 }
@@ -176,19 +257,25 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                     Style::default().fg(Color::Gray),
                 ));
             }
+            minimad::Line::TableRule(_) => {
+                // Table separator line
+                spans.push(Span::styled(
+                    "─".repeat(40),
+                    Style::default().fg(Color::Gray),
+                ));
+            }
             _ => {
-                // For other line types, just get the text
-                spans.push(Span::raw(format!("{:?}", md_line)));
+                // For other line types, try to extract text
+                // This shouldn't happen with standard markdown
+                continue;
             }
         }
-        
+
         lines.push(Line::from(spans));
     }
-    
+
     lines
 }
-
-
 
 // These helper functions are commented out for now since we're not using custom styling
 /*
@@ -328,8 +415,49 @@ where 1 = 1</pre>
         for (i, line) in result.lines().enumerate() {
             println!("{}: {:?}", i, line);
         }
-        
+
         // Check that the SQL code is preserved
         assert!(result.contains("select os.id"));
+    }
+
+    #[test]
+    fn test_markdown_rendering() {
+        let markdown = r#"# Header 1
+## Header 2
+### Header 3
+
+Regular text with **bold** and *italic* and `inline code`.
+
+* List item 1
+* List item 2 with **bold**
+* List item 3 with `code`
+
+```rust
+fn main() {
+    println!("Hello!");
+}
+```
+
+> Quote text
+
+---"#;
+
+        let lines = parse_markdown_to_lines(markdown);
+
+        println!("\n=== Markdown Rendering Test ===");
+        println!("Input markdown has {} chars", markdown.len());
+        println!("Parsed into {} lines", lines.len());
+
+        for (i, line) in lines.iter().enumerate() {
+            println!("\nLine {}: {} spans", i, line.spans.len());
+            for (j, span) in line.spans.iter().enumerate() {
+                println!("  Span {}: {:?} -> {:?}", j, span.content, span.style);
+            }
+        }
+
+        // Basic assertions
+        assert!(lines.len() > 0);
+        // Should have headers, list items, code blocks, etc
+        assert!(lines.len() >= 10);
     }
 }

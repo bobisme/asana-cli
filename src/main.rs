@@ -177,7 +177,7 @@ async fn main() -> Result<()> {
                     if let Some(task_id) = get_matches.get_one::<String>("task_id") {
                         // Initialize state manager
                         state_manager.initialize().await?;
-                        
+
                         // Get the specific task
                         match state_manager.get_task(&task_id.as_str().into()).await {
                             Ok(task) => {

@@ -1611,10 +1611,6 @@ impl App {
         }
     }
 
-
-
-
-
     fn render_comments_section(&self, frame: &mut Frame, area: Rect) {
         let mut lines = Vec::new();
 
