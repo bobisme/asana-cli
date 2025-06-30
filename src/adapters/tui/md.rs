@@ -1,8 +1,5 @@
 use kuchiki::traits::*;
-use ratatui::{
-    prelude::*,
-    text::{Line, Span},
-};
+use ratatui::text::Line;
 
 /// Fix invalid nested list structure in HTML
 /// Asana's API can produce invalid HTML for nested lists (e.g., a <ul>
@@ -11,47 +8,83 @@ use ratatui::{
 fn fix_nested_lists(html: &str) -> String {
     let document = kuchiki::parse_html().one(html);
     
+    // We need to process lists from deepest to shallowest to avoid issues
+    // First, collect all lists with their depth
+    let mut invalid_lists = Vec::new();
+    
     // Find all <ul> and <ol> elements
-    let list_selector = match document.select("ul, ol") {
-        Ok(selector) => selector,
-        Err(_) => return html.to_string(), // Return original if selector fails
-    };
-    
-    // Collect nodes to fix (we can't modify while iterating)
-    let mut fixes_needed = Vec::new();
-    
-    for list_ref in list_selector {
-        let list_node = list_ref.as_node();
-        
-        // Check if parent is also a list (ul or ol)
-        if let Some(parent) = list_node.parent() {
-            if let Some(element) = parent.as_element() {
-                let parent_name = &element.name.local;
-                if parent_name.as_ref() == "ul" || parent_name.as_ref() == "ol" {
-                    // This list is a direct child of another list - needs fixing
-                    // Find the preceding <li> sibling
-                    let mut current = list_node.clone();
-                    while let Some(prev_sibling) = current.previous_sibling() {
-                        if let Some(element) = prev_sibling.as_element() {
-                            if element.name.local.as_ref() == "li" {
-                                // Found the preceding <li> - store the fix needed
-                                fixes_needed.push((list_node.clone(), prev_sibling.clone()));
-                                break;
-                            }
+    if let Ok(list_selector) = document.select("ul, ol") {
+        for list_ref in list_selector {
+            let list_node = list_ref.as_node();
+            
+            // Check if parent is also a list (ul or ol)
+            if let Some(parent) = list_node.parent() {
+                if let Some(element) = parent.as_element() {
+                    let parent_name = &element.name.local;
+                    if parent_name.as_ref() == "ul" || parent_name.as_ref() == "ol" {
+                        // Calculate depth for sorting
+                        let mut depth = 0;
+                        let mut current = list_node.clone();
+                        while let Some(p) = current.parent() {
+                            depth += 1;
+                            current = p;
                         }
-                        current = prev_sibling;
+                        invalid_lists.push((depth, list_node.clone()));
                     }
                 }
             }
         }
     }
     
-    // Apply the fixes
-    for (list_node, li_node) in fixes_needed {
-        // Detach the list from its current position
-        list_node.detach();
-        // Append it to the preceding <li>
-        li_node.append(list_node);
+    // Sort by depth (deepest first) to avoid processing order issues
+    invalid_lists.sort_by(|a, b| b.0.cmp(&a.0));
+    
+    // Apply fixes
+    for (_, list_node) in invalid_lists {
+        // Find the preceding <li> sibling
+        let mut prev_li = None;
+        let mut current = list_node.clone();
+        
+        while let Some(prev_sibling) = current.previous_sibling() {
+            if let Some(element) = prev_sibling.as_element() {
+                if element.name.local.as_ref() == "li" {
+                    prev_li = Some(prev_sibling);
+                    break;
+                }
+            }
+            current = prev_sibling;
+        }
+        
+        // If we found a preceding <li>, move the list inside it
+        if let Some(li_node) = prev_li {
+            // Check if there are any nodes after the list that should stay with the parent
+            let mut nodes_after = Vec::new();
+            let mut next = list_node.next_sibling();
+            
+            // Collect any <li> elements that come after this invalid list
+            while let Some(sibling) = next {
+                let next_next = sibling.next_sibling(); // Store before potential detach
+                
+                if let Some(element) = sibling.as_element() {
+                    if element.name.local.as_ref() == "li" {
+                        nodes_after.push(sibling.clone());
+                    } else if element.name.local.as_ref() == "ul" || element.name.local.as_ref() == "ol" {
+                        // Stop if we hit another list
+                        break;
+                    }
+                }
+                
+                next = next_next;
+            }
+            
+            // Detach the list from its current position
+            list_node.detach();
+            
+            // Append it as the last child of the preceding <li>
+            li_node.append(list_node);
+            
+            // The nodes after the list stay where they are (siblings of the li_node)
+        }
     }
     
     // Return the fixed HTML
@@ -67,9 +100,20 @@ pub fn html_to_markdown(html: &str) -> String {
     // First fix any invalid nested list structures
     let fixed_html = fix_nested_lists(html);
 
-    // Convert HTML to markdown using htmd with better error handling
-    // htmd has better customization options for modifying HTML before conversion
-    match htmd::convert(&fixed_html) {
+    // Configure htmd options to reduce aggressive spacing
+    let options = htmd::options::Options {
+        // Reduce the aggressive spacing htmd uses by default
+        ul_bullet_spacing: 1,  // Default is 3, use 1 for "* item" instead of "*   item"
+        ol_number_spacing: 1,  // Default is likely 2-3, use 1 for "1. item" instead of "1.  item"
+        ..Default::default()
+    };
+
+    // Convert HTML to markdown using htmd with custom options
+    let converter = htmd::HtmlToMarkdown::builder()
+        .options(options)
+        .build();
+        
+    match converter.convert(&fixed_html) {
         Ok(markdown) => {
             // Clean up extra whitespace and newlines
             markdown.trim().to_string()
@@ -83,103 +127,15 @@ pub fn html_to_markdown(html: &str) -> String {
 
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
-    let mut lines = Vec::new();
-
-    for line in markdown.lines() {
-        let trimmed = line.trim();
-
-        if trimmed.is_empty() {
-            lines.push(Line::from(""));
-            continue;
-        }
-
-        // Handle headers
-        if let Some(text) = trimmed.strip_prefix("# ") {
-            lines.push(Line::from(vec![Span::styled(
-                text.to_string(),
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-            lines.push(Line::from(""));
-        } else if let Some(text) = trimmed.strip_prefix("## ") {
-            lines.push(Line::from(vec![Span::styled(
-                text.to_string(),
-                Style::default()
-                    .fg(Color::Blue)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-        } else if let Some(text) = trimmed.strip_prefix("### ") {
-            lines.push(Line::from(vec![Span::styled(
-                text.to_string(),
-                Style::default()
-                    .fg(Color::Cyan)
-                    .add_modifier(Modifier::BOLD),
-            )]));
-        }
-        // Handle bullet points
-        else if trimmed.starts_with("- ") || trimmed.starts_with("* ") {
-            let text = &trimmed[2..];
-            lines.push(Line::from(vec![
-                Span::styled("• ", Style::default().fg(Color::Green)),
-                Span::raw(text.to_string()),
-            ]));
-        }
-        // Handle numbered lists
-        else if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit())
-            && trimmed.contains(". ")
-        {
-            if let Some(dot_pos) = trimmed.find(". ") {
-                let number = &trimmed[..dot_pos + 1];
-                let text = &trimmed[dot_pos + 2..];
-                lines.push(Line::from(vec![
-                    Span::styled(format!("{number} "), Style::default().fg(Color::Magenta)),
-                    Span::raw(text.to_string()),
-                ]));
-            } else {
-                lines.push(Line::from(trimmed.to_string()));
-            }
-        }
-        // Handle bold text (basic **text** parsing)
-        else if trimmed.contains("**") {
-            let styled_line = parse_bold_text(trimmed);
-            lines.push(styled_line);
-        }
-        // Handle italic text (basic *text* parsing)
-        else if trimmed.contains('*') && !trimmed.starts_with("*") {
-            let styled_line = parse_italic_text(trimmed);
-            lines.push(styled_line);
-        }
-        // Handle code blocks or inline code
-        else if trimmed.starts_with("```") {
-            lines.push(Line::from(vec![Span::styled(
-                trimmed.to_string(),
-                Style::default().fg(Color::Gray).bg(Color::DarkGray),
-            )]));
-        } else if trimmed.contains('`') {
-            let styled_line = parse_inline_code(trimmed);
-            lines.push(styled_line);
-        }
-        // Regular text
-        else {
-            lines.push(Line::from(trimmed.to_string()));
-        }
-    }
-
-    // Remove trailing empty lines to reduce blank space
-    while let Some(last_line) = lines.last() {
-        if last_line.spans.is_empty()
-            || (last_line.spans.len() == 1 && last_line.spans[0].content.is_empty())
-        {
-            lines.pop();
-        } else {
-            break;
-        }
-    }
-
-    lines
+    // For now, just return the raw markdown without any styling
+    markdown
+        .lines()
+        .map(|line| Line::from(line.to_string()))
+        .collect()
 }
 
+// These helper functions are commented out for now since we're not using custom styling
+/*
 /// Parse bold text (**text**)
 fn parse_bold_text(text: &str) -> Line<'static> {
     let mut spans = Vec::new();
@@ -294,3 +250,4 @@ fn parse_inline_code(text: &str) -> Line<'static> {
 
     Line::from(spans)
 }
+*/

@@ -903,7 +903,7 @@ impl App {
             .collect();
 
         let paragraph = Paragraph::new(visible_lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .alignment(ratatui::layout::Alignment::Left);
         frame.render_widget(paragraph, area);
     }
@@ -997,7 +997,7 @@ impl App {
             .skip(self.comments_scroll_offset as usize)
             .collect();
 
-        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: true });
+        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, area);
     }
 
@@ -1216,7 +1216,7 @@ impl App {
 
         let paragraph = Paragraph::new(help_text)
             .block(Block::default().title("Help").borders(Borders::ALL))
-            .wrap(ratatui::widgets::Wrap { trim: true });
+            .wrap(ratatui::widgets::Wrap { trim: false });
 
         frame.render_widget(paragraph, popup_area);
     }
@@ -1287,7 +1287,7 @@ impl App {
                     .add_modifier(Modifier::BOLD),
             )
             .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
+            .wrap(Wrap { trim: false });
         frame.render_widget(title_paragraph, chunks[0]);
 
         // Render all content as one scrollable section
@@ -1422,7 +1422,7 @@ impl App {
             .collect();
 
         let paragraph = Paragraph::new(visible_lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .alignment(ratatui::layout::Alignment::Left);
         frame.render_widget(paragraph, inner_area);
     }
@@ -1538,7 +1538,7 @@ impl App {
             .skip(self.comments_scroll_offset as usize)
             .collect();
 
-        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: true });
+        let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner_area);
     }
 
@@ -1604,7 +1604,7 @@ impl App {
                     )]),
                 );
 
-                let paragraph = Paragraph::new(styled_lines).wrap(Wrap { trim: true });
+                let paragraph = Paragraph::new(styled_lines).wrap(Wrap { trim: false });
 
                 frame.render_widget(paragraph, area);
             }
@@ -1711,7 +1711,7 @@ impl App {
         let scroll_offset = self.detail_scroll_offset.min(max_scroll);
 
         let paragraph = Paragraph::new(lines)
-            .wrap(Wrap { trim: true })
+            .wrap(Wrap { trim: false })
             .scroll((scroll_offset, 0));
 
         frame.render_widget(paragraph, area);
