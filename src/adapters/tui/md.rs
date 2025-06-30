@@ -226,6 +226,14 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
             }
         };
 
+    // Helper to add a blank line
+    let add_blank_line = |lines: &mut Vec<MarkdownLine>| {
+        lines.push(MarkdownLine {
+            line: Line::from(vec![Span::raw("")]),
+            is_code_block: false,
+        });
+    };
+
     for event in parser {
         match event {
             Event::Start(tag) => {
@@ -253,7 +261,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                     }
                     Tag::List(start_num) => {
                         // Track list nesting
-                        let indent_level = list_stack.len() * 4;
+                        let indent_level = list_stack.len() * 2; // 2 spaces per level
                         list_stack.push(ListInfo {
                             is_ordered: start_num.is_some(),
                             indent_level,
@@ -325,21 +333,28 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                 match tag {
                     TagEnd::Paragraph => {
                         finish_line(&mut current_line_spans, &mut lines, false);
+                        add_blank_line(&mut lines);
                     }
                     TagEnd::Heading(_) => {
                         emphasis_stack.pop();
                         finish_line(&mut current_line_spans, &mut lines, false);
+                        add_blank_line(&mut lines);
                     }
                     TagEnd::List(_) => {
                         // Finish current line if any
                         finish_line(&mut current_line_spans, &mut lines, false);
                         list_stack.pop();
+                        // Only add blank line after outermost list ends
+                        if list_stack.is_empty() {
+                            add_blank_line(&mut lines);
+                        }
                     }
                     TagEnd::Item => {
                         // Don't finish line here - let other events handle line breaks
                     }
                     TagEnd::CodeBlock => {
                         in_code_block = false;
+                        add_blank_line(&mut lines);
                     }
                     TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
                         emphasis_stack.pop();
@@ -368,6 +383,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                     TagEnd::BlockQuote => {
                         emphasis_stack.pop();
                         finish_line(&mut current_line_spans, &mut lines, false);
+                        add_blank_line(&mut lines);
                     }
                     TagEnd::Table => {}
                     TagEnd::TableHead => {}
@@ -397,23 +413,39 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                     }
 
                     if in_code_block {
-                        // For code blocks, pad to width if specified
-                        let content = if let Some(w) = width {
-                            let content_len = text.chars().count();
-                            if content_len < w as usize {
-                                format!("{}{}", text, " ".repeat(w as usize - content_len))
-                            } else {
-                                text.to_string()
-                            }
-                        } else {
-                            text.to_string()
-                        };
+                        // Split code text by newlines and create separate lines
+                        let text_str = text.to_string();
+                        let code_lines: Vec<&str> = text_str.split('\n').collect();
 
-                        // Code blocks get special background
-                        lines.push(MarkdownLine {
-                            line: Line::from(vec![Span::styled(content, style.bg(Color::Black))]),
-                            is_code_block: true,
-                        });
+                        for (i, line_text) in code_lines.iter().enumerate() {
+                            // Skip empty lines between actual lines (but keep truly empty lines)
+                            if i > 0 || !line_text.is_empty() || code_lines.len() == 1 {
+                                // Pad to width if specified
+                                let content = if let Some(w) = width {
+                                    let content_len = line_text.chars().count();
+                                    if content_len < w as usize {
+                                        format!(
+                                            "{}{}",
+                                            line_text,
+                                            " ".repeat(w as usize - content_len)
+                                        )
+                                    } else {
+                                        line_text.to_string()
+                                    }
+                                } else {
+                                    line_text.to_string()
+                                };
+
+                                // Code blocks get special background
+                                lines.push(MarkdownLine {
+                                    line: Line::from(vec![Span::styled(
+                                        content,
+                                        style.bg(Color::Black),
+                                    )]),
+                                    is_code_block: true,
+                                });
+                            }
+                        }
                     } else {
                         current_line_spans.push(Span::styled(text.to_string(), style));
                     }
@@ -516,7 +548,7 @@ where 1 = 1</pre>
 
                 // Count leading spaces to determine depth
                 let leading_spaces = first_span_content.chars().take_while(|&c| c == ' ').count();
-                let depth = leading_spaces / 4; // pulldown-cmark uses 4 spaces per level
+                let depth = leading_spaces / 2; // we use 2 spaces per level
 
                 if first_span_content.contains("• ") {
                     println!(
@@ -555,12 +587,12 @@ where 1 = 1</pre>
 
 Regular text with **bold** and *italic* and `inline code`.
 
-* List item 1
-* List item 2 with **bold**
-  * Nested item 1
-  * Nested item 2
-    * Double nested
-* List item 3 with `code`
+- List item 1
+- List item 2 with **bold**
+  - Nested item 1
+  - Nested item 2
+    - Double nested
+- List item 3 with `code`
 
     This is indented with 4 spaces but should not be code.
 
@@ -593,7 +625,8 @@ fn main() {
         // Basic assertions
         assert!(lines.len() > 0);
         // Should have headers, list items, code blocks, etc
-        assert!(lines.len() >= 10);
+        // With blank lines added, we'll have more lines
+        assert!(lines.len() >= 20);
     }
 
     #[test]
@@ -680,10 +713,10 @@ fn main() {
 
         // First level items should start with number
         assert!(lines[0].spans.iter().any(|s| s.content.contains("1.")));
-        // Nested items should have indentation (4 spaces)
+        // Nested items should have indentation (2 spaces)
         assert!(
-            line1_text.starts_with("    "),
-            "Line 1 should start with 4 spaces, got: '{}'",
+            line1_text.starts_with("  "),
+            "Line 1 should start with 2 spaces, got: '{}'",
             line1_text
         );
     }
@@ -741,21 +774,21 @@ fn main() {
         // Check indentation levels
         assert_eq!(line0_text, "1. item 1");
         assert!(
-            line1_text.starts_with("    "),
-            "Line 1 should have 4 spaces, got: '{}'",
+            line1_text.starts_with("  "),
+            "Line 1 should have 2 spaces, got: '{}'",
             line1_text
         );
         assert!(
-            line2_text.starts_with("        "),
-            "Line 2 should have 8 spaces, got: '{}'",
+            line2_text.starts_with("    "),
+            "Line 2 should have 4 spaces, got: '{}'",
             line2_text
         );
 
         // Make sure we don't have excessive indentation
         let line2_spaces = line2_text.len() - line2_text.trim_start().len();
         assert!(
-            line2_spaces == 8,
-            "Line 2 should have exactly 8 spaces, got {} spaces: '{}'",
+            line2_spaces == 4,
+            "Line 2 should have exactly 4 spaces, got {} spaces: '{}'",
             line2_spaces,
             line2_text
         );
@@ -782,15 +815,15 @@ fn main() {
         // Note: line numbers may vary as pulldown-cmark adds blank lines
         let expected_patterns = vec![
             ("1. Top level", 0),
-            ("1. 4-space indent", 4),
-            ("1. 8-space indent", 8),
-            ("1. 12-space indent", 12),
-            ("2. Back to 4-space", 4),
+            ("1. 4-space indent", 2),
+            ("1. 8-space indent", 4),
+            ("1. 12-space indent", 6),
+            ("2. Back to 4-space", 2),
             ("2. Back to top", 0),
             ("• Bullet top", 0),
-            ("• 4-space bullet", 4),
-            ("• 8-space bullet", 8),
-            ("• Back to 4-space", 4),
+            ("• 4-space bullet", 2),
+            ("• 8-space bullet", 4),
+            ("• Back to 4-space", 2),
         ];
 
         for (expected_content, expected_indent) in expected_patterns {
@@ -873,18 +906,18 @@ fn main() {
         );
 
         // Check specific indentations
-        // pulldown-cmark normalizes to 4-space indents per level
+        // We use 2-space indents per level
         assert!(
             indented_lines
                 .iter()
-                .any(|(_, text)| text.starts_with("    • ")),
-            "Should have 4-space indented bullet"
+                .any(|(_, text)| text.starts_with("  • ")),
+            "Should have 2-space indented bullet"
         );
         assert!(
             indented_lines
                 .iter()
-                .any(|(_, text)| text.starts_with("        ")),
-            "Should have 8-space indented item"
+                .any(|(_, text)| text.starts_with("    ")),
+            "Should have 4-space indented item"
         );
     }
 }
