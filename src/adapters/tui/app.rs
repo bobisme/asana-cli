@@ -71,8 +71,8 @@ pub struct App {
     needs_task_reload: bool,
 
     // Cached parsed content for performance
-    cached_description_lines: Option<Vec<Line<'static>>>,
-    cached_comments_lines: Option<Vec<Line<'static>>>,
+    cached_description_lines: Option<Vec<md::MarkdownLine>>,
+    cached_comments_lines: Option<Vec<md::MarkdownLine>>,
 }
 
 impl App {
@@ -244,7 +244,7 @@ impl App {
             if let Some(desc) = &task.description {
                 if !desc.trim().is_empty() {
                     let markdown_desc = md::html_to_markdown(desc);
-                    let styled_lines = md::parse_markdown_to_lines(&markdown_desc);
+                    let styled_lines = md::parse_markdown_to_marked_lines(&markdown_desc, None);
                     description_content_lines += styled_lines.len() as u16 + 1; // +1 for header
                 }
             } else {
@@ -845,7 +845,7 @@ impl App {
         // Check if we need to regenerate the cache
         if self.cached_description_lines.is_none() {
             // Generate and cache the lines
-            let mut lines = Vec::new();
+            let mut lines: Vec<md::MarkdownLine> = Vec::new();
 
             // Add task info section
             let (status_text, status_color) = task.status_display();
@@ -857,10 +857,13 @@ impl App {
                 _ => Style::default(),
             };
 
-            lines.push(Line::from(vec![
-                Span::styled("Status: ", Style::default().fg(Color::Cyan)),
-                Span::styled(status_text, status_style),
-            ]));
+            lines.push(md::MarkdownLine {
+                line: Line::from(vec![
+                    Span::styled("Status: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(status_text, status_style),
+                ]),
+                is_code_block: false,
+            });
 
             let due_text = task.due_date_display();
             let due_style = if task.is_overdue() {
@@ -868,46 +871,62 @@ impl App {
             } else {
                 Style::default()
             };
-            lines.push(Line::from(vec![
-                Span::styled("Due: ", Style::default().fg(Color::Cyan)),
-                Span::styled(due_text, due_style),
-            ]));
+            lines.push(md::MarkdownLine {
+                line: Line::from(vec![
+                    Span::styled("Due: ", Style::default().fg(Color::Cyan)),
+                    Span::styled(due_text, due_style),
+                ]),
+                is_code_block: false,
+            });
 
             if task.assignee.is_some() {
                 let assignee_display = task.assignee_name.as_deref().unwrap_or("Unknown User");
-                lines.push(Line::from(vec![
-                    Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
-                    Span::raw(assignee_display.to_string()),
-                ]));
+                lines.push(md::MarkdownLine {
+                    line: Line::from(vec![
+                        Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
+                        Span::raw(assignee_display.to_string()),
+                    ]),
+                    is_code_block: false,
+                });
             }
 
             // Add blank line separator
-            lines.push(Line::from(""));
+            lines.push(md::MarkdownLine {
+                line: Line::from(""),
+                is_code_block: false,
+            });
 
             // Add description if present
             if let Some(description) = &task.description {
                 if !description.trim().is_empty() {
                     let markdown_desc = md::html_to_markdown(description);
-                    let mut styled_lines = md::parse_markdown_to_lines(&markdown_desc);
+                    let mut styled_lines =
+                        md::parse_markdown_to_marked_lines(&markdown_desc, Some(area.width));
 
                     // Add description header
                     styled_lines.insert(
                         0,
-                        Line::from(vec![Span::styled(
-                            "Description:",
-                            Style::default()
-                                .fg(Color::Cyan)
-                                .add_modifier(Modifier::BOLD),
-                        )]),
+                        md::MarkdownLine {
+                            line: Line::from(vec![Span::styled(
+                                "Description:",
+                                Style::default()
+                                    .fg(Color::Cyan)
+                                    .add_modifier(Modifier::BOLD),
+                            )]),
+                            is_code_block: false,
+                        },
                     );
 
                     lines.extend(styled_lines);
                 }
             } else {
-                lines.push(Line::from(vec![Span::styled(
-                    "No description available",
-                    Style::default().fg(Color::Gray),
-                )]));
+                lines.push(md::MarkdownLine {
+                    line: Line::from(vec![Span::styled(
+                        "No description available",
+                        Style::default().fg(Color::Gray),
+                    )]),
+                    is_code_block: false,
+                });
             }
 
             // Cache the generated lines
@@ -917,16 +936,41 @@ impl App {
         // Use cached lines for rendering
         if let Some(cached_lines) = &self.cached_description_lines {
             // Apply scrolling - skip lines based on scroll offset
-            let visible_lines: Vec<Line> = cached_lines
+            let visible_lines: Vec<&md::MarkdownLine> = cached_lines
                 .iter()
                 .skip(self.description_scroll_offset as usize)
-                .cloned()
                 .collect();
 
-            let paragraph = Paragraph::new(visible_lines)
-                .wrap(Wrap { trim: false })
-                .alignment(ratatui::layout::Alignment::Left);
-            frame.render_widget(paragraph, area);
+            // Render lines with special handling for code blocks
+            let mut y = 0;
+            for marked_line in visible_lines {
+                if y >= area.height {
+                    break;
+                }
+
+                // Create a sub-area for this line
+                let line_area = Rect {
+                    x: area.x,
+                    y: area.y + y,
+                    width: area.width,
+                    height: 1,
+                };
+
+                if marked_line.is_code_block {
+                    // Render code blocks without wrapping
+                    let paragraph = Paragraph::new(marked_line.line.clone())
+                        .alignment(ratatui::layout::Alignment::Left);
+                    frame.render_widget(paragraph, line_area);
+                } else {
+                    // Render regular lines with wrapping
+                    let paragraph = Paragraph::new(marked_line.line.clone())
+                        .wrap(Wrap { trim: false })
+                        .alignment(ratatui::layout::Alignment::Left);
+                    frame.render_widget(paragraph, line_area);
+                }
+
+                y += 1;
+            }
         }
     }
 
@@ -934,14 +978,17 @@ impl App {
         // Check if we need to regenerate the cache
         if self.cached_comments_lines.is_none() {
             // Generate and cache the lines
-            let mut lines = Vec::new();
+            let mut lines: Vec<md::MarkdownLine> = Vec::new();
 
             // Comments and activity
             if self.task_comments.is_empty() {
-                lines.push(Line::from(vec![Span::styled(
-                    "No comments or activity",
-                    Style::default().fg(Color::Gray),
-                )]));
+                lines.push(md::MarkdownLine {
+                    line: Line::from(vec![Span::styled(
+                        "No comments or activity",
+                        Style::default().fg(Color::Gray),
+                    )]),
+                    is_code_block: false,
+                });
             } else {
                 // Separate comments from system activity
                 let mut user_comments = Vec::new();
@@ -957,13 +1004,19 @@ impl App {
 
                 // Render user comments first
                 if !user_comments.is_empty() {
-                    lines.push(Line::from(vec![Span::styled(
-                        "Comments",
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
-                    )]));
-                    lines.push(Line::from(""));
+                    lines.push(md::MarkdownLine {
+                        line: Line::from(vec![Span::styled(
+                            "Comments",
+                            Style::default()
+                                .fg(Color::Green)
+                                .add_modifier(Modifier::BOLD),
+                        )]),
+                        is_code_block: false,
+                    });
+                    lines.push(md::MarkdownLine {
+                        line: Line::from(""),
+                        is_code_block: false,
+                    });
 
                     for comment in &user_comments {
                         let author_name = comment
@@ -973,44 +1026,62 @@ impl App {
                             .unwrap_or_else(|| "Unknown".to_string());
                         let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
 
-                        lines.push(Line::from(vec![
-                            Span::styled("• ", Style::default().fg(Color::Yellow)),
-                            Span::styled(
-                                author_name,
-                                Style::default()
-                                    .fg(Color::Yellow)
-                                    .add_modifier(Modifier::BOLD),
-                            ),
-                            Span::styled(
-                                format!(" ({})", time_display),
-                                Style::default().fg(Color::Gray),
-                            ),
-                        ]));
+                        lines.push(md::MarkdownLine {
+                            line: Line::from(vec![
+                                Span::styled("• ", Style::default().fg(Color::Yellow)),
+                                Span::styled(
+                                    author_name,
+                                    Style::default()
+                                        .fg(Color::Yellow)
+                                        .add_modifier(Modifier::BOLD),
+                                ),
+                                Span::styled(
+                                    format!(" ({})", time_display),
+                                    Style::default().fg(Color::Gray),
+                                ),
+                            ]),
+                            is_code_block: false,
+                        });
 
                         let cleaned_text = md::html_to_markdown(&comment.text);
-                        lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
-                        lines.push(Line::from(""));
+                        lines.push(md::MarkdownLine {
+                            line: Line::from(vec![Span::raw(format!("  {}", cleaned_text))]),
+                            is_code_block: false,
+                        });
+                        lines.push(md::MarkdownLine {
+                            line: Line::from(""),
+                            is_code_block: false,
+                        });
                     }
                 }
 
                 // Render system activity
                 if !system_activity.is_empty() {
-                    lines.push(Line::from(vec![Span::styled(
-                        "Activity",
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .add_modifier(Modifier::BOLD),
-                    )]));
-                    lines.push(Line::from(""));
+                    lines.push(md::MarkdownLine {
+                        line: Line::from(vec![Span::styled(
+                            "Activity",
+                            Style::default()
+                                .fg(Color::Yellow)
+                                .add_modifier(Modifier::BOLD),
+                        )]),
+                        is_code_block: false,
+                    });
+                    lines.push(md::MarkdownLine {
+                        line: Line::from(""),
+                        is_code_block: false,
+                    });
 
                     for activity in &system_activity {
                         let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
                         let cleaned_text = md::html_to_markdown(&activity.text);
 
-                        lines.push(Line::from(vec![
-                            Span::styled("• ", Style::default().fg(Color::Blue)),
-                            Span::raw(format!("{} ({})", cleaned_text, time_display)),
-                        ]));
+                        lines.push(md::MarkdownLine {
+                            line: Line::from(vec![
+                                Span::styled("• ", Style::default().fg(Color::Blue)),
+                                Span::raw(format!("{} ({})", cleaned_text, time_display)),
+                            ]),
+                            is_code_block: false,
+                        });
                     }
                 }
             }
@@ -1025,7 +1096,7 @@ impl App {
             let visible_lines: Vec<Line> = cached_lines
                 .iter()
                 .skip(self.comments_scroll_offset as usize)
-                .cloned()
+                .map(|ml| ml.line.clone())
                 .collect();
 
             let paragraph = Paragraph::new(visible_lines).wrap(Wrap { trim: false });

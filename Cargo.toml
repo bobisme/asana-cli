@@ -5,8 +5,8 @@ edition = "2021"
 
 [dependencies]
 # TUI Framework
-ratatui = "0.28"
-crossterm = "0.27"
+ratatui = "0.29"
+crossterm = "0.29"
 
 # Async runtime and HTTP client
 tokio = { version = "1.45", features = ["full"] }

@@ -1,6 +1,13 @@
 use kuchiki::traits::*;
 use ratatui::text::Line;
 
+/// Represents a parsed markdown line with metadata
+#[derive(Clone)]
+pub struct MarkdownLine {
+    pub line: Line<'static>,
+    pub is_code_block: bool,
+}
+
 /// Fix invalid nested list structure in HTML
 /// Asana's API can produce invalid HTML for nested lists (e.g., a <ul>
 /// as a direct child of another <ul>, or <ol> as a direct child of <ol>).
@@ -220,6 +227,22 @@ fn preprocess_markdown(markdown: &str) -> String {
 
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
+    parse_markdown_to_lines_with_width(markdown, None)
+}
+
+/// Parse markdown text and convert to styled Lines with optional width for code blocks
+pub fn parse_markdown_to_lines_with_width(
+    markdown: &str,
+    width: Option<u16>,
+) -> Vec<Line<'static>> {
+    parse_markdown_to_marked_lines(markdown, width)
+        .into_iter()
+        .map(|ml| ml.line)
+        .collect()
+}
+
+/// Parse markdown text and convert to MarkdownLine structs with metadata
+pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec<MarkdownLine> {
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::Span;
     use termimad::minimad;
@@ -296,12 +319,25 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                     }
                     CompositeStyle::Code => {
                         // Code block style - no indent, black background
-                        for compound in &composite.compounds {
-                            spans.push(Span::styled(
-                                compound.src.to_string(),
-                                Style::default().bg(Color::Black),
-                            ));
-                        }
+                        let line_content: String =
+                            composite.compounds.iter().map(|c| c.src).collect();
+
+                        // Pad to full width if width is provided
+                        let padded_content = if let Some(w) = width {
+                            let content_len = line_content.chars().count();
+                            if content_len < w as usize {
+                                format!("{}{}", line_content, " ".repeat(w as usize - content_len))
+                            } else {
+                                line_content
+                            }
+                        } else {
+                            line_content
+                        };
+
+                        spans.push(Span::styled(
+                            padded_content,
+                            Style::default().bg(Color::Black),
+                        ));
                     }
                     CompositeStyle::Quote => {
                         // Quote style
@@ -364,8 +400,20 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
                     continue;
                 } else {
                     // Code content - no indent, black background
+                    // Pad to full width if width is provided
+                    let padded_content = if let Some(w) = width {
+                        let content_len = line_content.chars().count();
+                        if content_len < w as usize {
+                            format!("{}{}", line_content, " ".repeat(w as usize - content_len))
+                        } else {
+                            line_content
+                        }
+                    } else {
+                        line_content
+                    };
+
                     spans.push(Span::styled(
-                        line_content,
+                        padded_content,
                         Style::default().bg(Color::Black),
                     ));
                 }
@@ -390,7 +438,19 @@ pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
             }
         }
 
-        lines.push(Line::from(spans));
+        // Check if this line is part of a code block
+        let is_current_line_code = match md_line {
+            minimad::Line::CodeFence(_) => true,
+            minimad::Line::Normal(composite) => {
+                matches!(composite.style, minimad::CompositeStyle::Code)
+            }
+            _ => false,
+        };
+
+        lines.push(MarkdownLine {
+            line: Line::from(spans),
+            is_code_block: is_current_line_code,
+        });
     }
 
     lines
