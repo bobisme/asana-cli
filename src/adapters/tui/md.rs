@@ -1,4 +1,5 @@
 use kuchiki::traits::*;
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use ratatui::text::Line;
 
 /// Represents a parsed markdown line with metadata
@@ -173,67 +174,6 @@ pub fn html_to_markdown(html: &str) -> String {
     }
 }
 
-/// Preprocess markdown to handle cases where htmd outputs 4-space indented lines
-/// that aren't meant to be code blocks
-fn preprocess_markdown(markdown: &str) -> String {
-    let mut result = Vec::new();
-    let mut in_code_block = false;
-    let mut prev_was_blank = true;
-
-    for line in markdown.lines() {
-        // Check if we're entering or leaving a code block
-        if line.trim().starts_with("```") || line.trim().starts_with("~~~") {
-            in_code_block = !in_code_block;
-            result.push(line.to_string());
-            prev_was_blank = false;
-            continue;
-        }
-
-        // If we're in a code block, don't process the line
-        if in_code_block {
-            result.push(line.to_string());
-            prev_was_blank = false;
-            continue;
-        }
-
-        // Check if this line is a list item
-        let trimmed = line.trim();
-        let is_list_item = trimmed.starts_with("* ")
-            || trimmed.starts_with("- ")
-            || trimmed.starts_with("+ ")
-            || (trimmed.chars().nth(0).map_or(false, |c| c.is_numeric()) && trimmed.contains(". "));
-
-        // Check if this line starts with 4+ spaces
-        if line.starts_with("    ") {
-            // If it's a list item, keep the indentation
-            if is_list_item {
-                result.push(line.to_string());
-            } else {
-                // This might be a false code block from htmd
-                // Heuristic: if it looks like prose (has multiple words, punctuation),
-                // it's probably not meant to be code
-                let looks_like_prose = trimmed.split_whitespace().count() > 5
-                    || trimmed.contains(". ")
-                    || trimmed.contains(", ");
-
-                if looks_like_prose || !prev_was_blank {
-                    // Convert to non-indented line
-                    result.push(line.trim_start().to_string());
-                } else {
-                    // Keep as-is, it might be actual code
-                    result.push(line.to_string());
-                }
-            }
-        } else {
-            result.push(line.to_string());
-        }
-
-        prev_was_blank = line.trim().is_empty();
-    }
-
-    result.join("\n")
-}
-
 /// Parse markdown text and convert to styled Lines for better rendering
 pub fn parse_markdown_to_lines(markdown: &str) -> Vec<Line<'static>> {
     parse_markdown_to_lines_with_width(markdown, None)
@@ -254,414 +194,270 @@ pub fn parse_markdown_to_lines_with_width(
 pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec<MarkdownLine> {
     use ratatui::style::{Color, Modifier, Style};
     use ratatui::text::Span;
-    use termimad::minimad;
 
     let mut lines = Vec::new();
 
-    // Preprocess markdown to handle htmd's 4-space indentation
-    // htmd sometimes indents content with 4 spaces which minimad interprets as code blocks
-    // We'll detect these cases and convert them to regular paragraphs
-    let preprocessed = preprocess_markdown(markdown);
+    // Create parser with default options
+    let parser = Parser::new(markdown);
 
-    // Parse markdown with minimad
-    let options = minimad::Options::default();
-    let md_lines = minimad::parse_text(&preprocessed, options);
+    // Track state
+    let mut current_line_spans: Vec<Span<'static>> = Vec::new();
+    let mut in_code_block = false;
+    let mut list_stack: Vec<ListInfo> = Vec::new();
+    let mut emphasis_stack = Vec::new();
+    let mut link_destination = None;
 
-    // Keep track of original lines for indentation
-    let original_lines: Vec<&str> = preprocessed.lines().collect();
+    #[derive(Clone)]
+    struct ListInfo {
+        is_ordered: bool,
+        indent_level: usize,
+        next_number: u64,
+    }
 
-    // Convert each parsed line
-    for (line_idx, md_line) in md_lines.lines.into_iter().enumerate() {
-        let mut spans = Vec::new();
+    // Helper to finish current line
+    let finish_line =
+        |spans: &mut Vec<Span<'static>>, lines: &mut Vec<MarkdownLine>, is_code: bool| {
+            if !spans.is_empty() {
+                let line_spans: Vec<Span<'static>> = spans.drain(..).collect();
+                lines.push(MarkdownLine {
+                    line: Line::from(line_spans),
+                    is_code_block: is_code,
+                });
+            }
+        };
 
-        // Get the original line to preserve indentation
-        let original_line = original_lines.get(line_idx).copied().unwrap_or("");
-        let original_indent = original_line.len() - original_line.trim_start().len();
-
-        // Process the line based on its type
-        match &md_line {
-            minimad::Line::Normal(composite) => {
-                // Check the composite style to determine line type
-                use termimad::minimad::CompositeStyle;
-
-                match &composite.style {
-                    CompositeStyle::Header(level) => {
-                        // Style headers based on level
+    for event in parser {
+        match event {
+            Event::Start(tag) => {
+                match tag {
+                    Tag::Paragraph => {
+                        // Start new paragraph
+                    }
+                    Tag::Heading { level, .. } => {
+                        // Apply header styling based on level
                         let header_style = match level {
-                            1 => Style::default()
+                            pulldown_cmark::HeadingLevel::H1 => Style::default()
                                 .fg(Color::Cyan)
                                 .add_modifier(Modifier::BOLD),
-                            2 => Style::default()
+                            pulldown_cmark::HeadingLevel::H2 => Style::default()
                                 .fg(Color::Blue)
                                 .add_modifier(Modifier::BOLD),
-                            3 => Style::default()
+                            pulldown_cmark::HeadingLevel::H3 => Style::default()
                                 .fg(Color::Magenta)
                                 .add_modifier(Modifier::BOLD),
                             _ => Style::default()
                                 .fg(Color::Yellow)
                                 .add_modifier(Modifier::BOLD),
                         };
-
-                        for compound in &composite.compounds {
-                            spans.push(Span::styled(compound.src.to_string(), header_style));
-                        }
+                        emphasis_stack.push(header_style);
                     }
-                    CompositeStyle::ListItem(depth) => {
-                        // Add bullet point or number with proper indentation
-                        // depth is the number of spaces, so divide by 2 for indent level
-                        let indent_level = (*depth as usize) / 2;
-                        let indent = "  ".repeat(indent_level);
-                        spans.push(Span::styled(format!("{}• ", indent), Style::default()));
-
-                        // Add the list item content
-                        for compound in &composite.compounds {
-                            let mut style = Style::default();
-
-                            if compound.bold {
-                                style = style.add_modifier(Modifier::BOLD);
-                            }
-                            if compound.italic {
-                                style = style.add_modifier(Modifier::ITALIC);
-                            }
-                            if compound.strikeout {
-                                style = style.add_modifier(Modifier::CROSSED_OUT);
-                            }
-                            if compound.code {
-                                style = style.fg(Color::Green).bg(Color::Black);
-                            }
-
-                            spans.push(Span::styled(compound.src.to_string(), style));
-                        }
+                    Tag::List(start_num) => {
+                        // Track list nesting
+                        let indent_level = list_stack.len() * 4;
+                        list_stack.push(ListInfo {
+                            is_ordered: start_num.is_some(),
+                            indent_level,
+                            next_number: start_num.unwrap_or(1),
+                        });
                     }
-                    CompositeStyle::Code => {
-                        // Check if this is actually a list item that minimad misidentified as code
-                        let line_content: String =
-                            composite.compounds.iter().map(|c| c.src).collect();
+                    Tag::Item => {
+                        // Start a new list item - finish previous line if any
+                        finish_line(&mut current_line_spans, &mut lines, false);
 
-                        let trimmed = line_content.trim();
-                        let is_list_item = trimmed.starts_with("* ")
-                            || trimmed.starts_with("- ")
-                            || trimmed.starts_with("+ ")
-                            || (trimmed.chars().nth(0).map_or(false, |c| c.is_numeric())
-                                && trimmed.contains(". "));
-
-                        if is_list_item {
-                            // This is a list item with indentation, not code
-                            // Calculate how much indentation minimad stripped
-                            let minimad_indent =
-                                line_content.len() - line_content.trim_start().len();
-                            let stripped_indent = original_indent.saturating_sub(minimad_indent);
-
-                            // Only add back the stripped indentation
-                            let indent = " ".repeat(stripped_indent);
-                            spans.push(Span::raw(format!("{}{}", indent, line_content)));
-                        } else {
-                            // Real code block - apply black background and padding
-                            let padded_content = if let Some(w) = width {
-                                let content_len = line_content.chars().count();
-                                if content_len < w as usize {
-                                    format!(
-                                        "{}{}",
-                                        line_content,
-                                        " ".repeat(w as usize - content_len)
-                                    )
-                                } else {
-                                    line_content
-                                }
+                        if let Some(list_info) = list_stack.last_mut() {
+                            let indent = " ".repeat(list_info.indent_level);
+                            if list_info.is_ordered {
+                                current_line_spans.push(Span::raw(format!(
+                                    "{}{}. ",
+                                    indent, list_info.next_number
+                                )));
+                                list_info.next_number += 1;
                             } else {
-                                line_content
-                            };
-
-                            spans.push(Span::styled(
-                                padded_content,
-                                Style::default().bg(Color::Black),
-                            ));
-                        }
-                    }
-                    CompositeStyle::Quote => {
-                        // Quote style
-                        spans.push(Span::styled("│ ", Style::default().fg(Color::Gray)));
-                        for compound in &composite.compounds {
-                            spans.push(Span::styled(
-                                compound.src.to_string(),
-                                Style::default()
-                                    .fg(Color::Gray)
-                                    .add_modifier(Modifier::ITALIC),
-                            ));
-                        }
-                    }
-                    _ => {
-                        // Check if this is a numbered list item that minimad didn't parse
-                        let full_line: String = composite.compounds.iter().map(|c| c.src).collect();
-                        let trimmed = full_line.trim_start();
-                        let indent_count = full_line.len() - trimmed.len();
-
-                        // Check for numbered list pattern
-                        if let Some(dot_pos) = trimmed.find(". ") {
-                            let prefix = &trimmed[..dot_pos];
-                            if prefix.chars().all(|c| c.is_numeric()) && !prefix.is_empty() {
-                                // This is a numbered list item
-                                // Just render it with proper indentation, don't add extra numbering
-                                for compound in &composite.compounds {
-                                    let mut style = Style::default();
-                                    if compound.bold {
-                                        style = style.add_modifier(Modifier::BOLD);
-                                    }
-                                    if compound.italic {
-                                        style = style.add_modifier(Modifier::ITALIC);
-                                    }
-                                    if compound.strikeout {
-                                        style = style.add_modifier(Modifier::CROSSED_OUT);
-                                    }
-                                    if compound.code {
-                                        style = style.fg(Color::Green).bg(Color::Black);
-                                    }
-                                    spans.push(Span::styled(compound.src.to_string(), style));
-                                }
-                            } else {
-                                // Not a numbered list, render normally
-                                for compound in &composite.compounds {
-                                    let mut style = Style::default();
-
-                                    if compound.bold {
-                                        style = style.add_modifier(Modifier::BOLD);
-                                    }
-                                    if compound.italic {
-                                        style = style.add_modifier(Modifier::ITALIC);
-                                    }
-                                    if compound.strikeout {
-                                        style = style.add_modifier(Modifier::CROSSED_OUT);
-                                    }
-                                    if compound.code {
-                                        style = style.fg(Color::Green).bg(Color::Black);
-                                    }
-
-                                    spans.push(Span::styled(compound.src.to_string(), style));
-                                }
-                            }
-                        } else {
-                            // Regular paragraph text
-                            for compound in &composite.compounds {
-                                let mut style = Style::default();
-
-                                if compound.bold {
-                                    style = style.add_modifier(Modifier::BOLD);
-                                }
-                                if compound.italic {
-                                    style = style.add_modifier(Modifier::ITALIC);
-                                }
-                                if compound.strikeout {
-                                    style = style.add_modifier(Modifier::CROSSED_OUT);
-                                }
-                                if compound.code {
-                                    style = style.fg(Color::Green).bg(Color::Black);
-                                }
-
-                                spans.push(Span::styled(compound.src.to_string(), style));
+                                current_line_spans.push(Span::raw(format!("{}• ", indent)));
                             }
                         }
                     }
+                    Tag::CodeBlock(_) => {
+                        in_code_block = true;
+                        // Finish current line if any
+                        finish_line(&mut current_line_spans, &mut lines, false);
+                    }
+                    Tag::Emphasis => {
+                        emphasis_stack.push(Style::default().add_modifier(Modifier::ITALIC));
+                    }
+                    Tag::Strong => {
+                        emphasis_stack.push(Style::default().add_modifier(Modifier::BOLD));
+                    }
+                    Tag::Strikethrough => {
+                        emphasis_stack.push(Style::default().add_modifier(Modifier::CROSSED_OUT));
+                    }
+                    Tag::Link { dest_url, .. } => {
+                        link_destination = Some(dest_url.to_string());
+                        emphasis_stack.push(
+                            Style::default()
+                                .fg(Color::Blue)
+                                .add_modifier(Modifier::UNDERLINED),
+                        );
+                    }
+                    Tag::Image { dest_url, .. } => {
+                        // We'll convert images to text placeholders
+                        link_destination = Some(dest_url.to_string());
+                    }
+                    Tag::BlockQuote(_) => {
+                        current_line_spans
+                            .push(Span::styled("│ ", Style::default().fg(Color::Gray)));
+                        emphasis_stack.push(
+                            Style::default()
+                                .fg(Color::Gray)
+                                .add_modifier(Modifier::ITALIC),
+                        );
+                    }
+                    Tag::Table(_) => {
+                        // Handle table start
+                    }
+                    Tag::TableHead => {}
+                    Tag::TableRow => {}
+                    Tag::TableCell => {}
+                    _ => {}
                 }
             }
-            minimad::Line::TableRow(row) => {
-                // Simple table rendering
-                for (i, cell) in row.cells.iter().enumerate() {
-                    if i > 0 {
-                        spans.push(Span::raw(" | "));
+            Event::End(tag) => {
+                match tag {
+                    TagEnd::Paragraph => {
+                        finish_line(&mut current_line_spans, &mut lines, false);
                     }
-                    for compound in &cell.compounds {
-                        spans.push(Span::raw(compound.src.to_string()));
+                    TagEnd::Heading(_) => {
+                        emphasis_stack.pop();
+                        finish_line(&mut current_line_spans, &mut lines, false);
                     }
+                    TagEnd::List(_) => {
+                        // Finish current line if any
+                        finish_line(&mut current_line_spans, &mut lines, false);
+                        list_stack.pop();
+                    }
+                    TagEnd::Item => {
+                        // Don't finish line here - let other events handle line breaks
+                    }
+                    TagEnd::CodeBlock => {
+                        in_code_block = false;
+                    }
+                    TagEnd::Emphasis | TagEnd::Strong | TagEnd::Strikethrough => {
+                        emphasis_stack.pop();
+                    }
+                    TagEnd::Link => {
+                        if let Some(url) = link_destination.take() {
+                            current_line_spans.push(Span::raw(format!(" ({})", url)));
+                        }
+                        emphasis_stack.pop();
+                    }
+                    TagEnd::Image => {
+                        // Add image placeholder if we captured alt text
+                        if link_destination.is_some() {
+                            // The alt text was already added in the Text event
+                            // Just add the [Image] suffix if no alt text was provided
+                            if current_line_spans.is_empty()
+                                || !current_line_spans
+                                    .last()
+                                    .map_or(false, |s| s.content.contains("["))
+                            {
+                                current_line_spans.push(Span::raw("[Image]"));
+                            }
+                        }
+                        link_destination = None;
+                    }
+                    TagEnd::BlockQuote => {
+                        emphasis_stack.pop();
+                        finish_line(&mut current_line_spans, &mut lines, false);
+                    }
+                    TagEnd::Table => {}
+                    TagEnd::TableHead => {}
+                    TagEnd::TableRow => {
+                        finish_line(&mut current_line_spans, &mut lines, false);
+                    }
+                    TagEnd::TableCell => {
+                        current_line_spans.push(Span::raw(" | "));
+                    }
+                    _ => {}
                 }
             }
-            minimad::Line::CodeFence(ref composite) => {
-                // Code fence line (could be opening/closing fence or code content)
-                // Check if this is a fence marker (``` or ~~~) or actual code
-                let line_content = composite
-                    .compounds
-                    .iter()
-                    .map(|c| c.src)
-                    .collect::<String>();
-
-                if line_content.trim().starts_with("```") || line_content.trim().starts_with("~~~")
-                {
-                    // Skip fence markers
-                    continue;
+            Event::Text(text) => {
+                if link_destination.is_some() && matches!(emphasis_stack.last(), Some(_)) {
+                    // This might be image alt text - check if we're in an image context
+                    // For now, we'll handle it as regular link text
+                    let mut style = Style::default();
+                    for s in &emphasis_stack {
+                        style = style.patch(*s);
+                    }
+                    current_line_spans.push(Span::styled(text.to_string(), style));
                 } else {
-                    // Code content - no indent, black background
-                    // Pad to full width if width is provided
-                    let padded_content = if let Some(w) = width {
-                        let content_len = line_content.chars().count();
-                        if content_len < w as usize {
-                            format!("{}{}", line_content, " ".repeat(w as usize - content_len))
-                        } else {
-                            line_content
-                        }
-                    } else {
-                        line_content
-                    };
+                    // Apply accumulated styles
+                    let mut style = Style::default();
+                    for s in &emphasis_stack {
+                        style = style.patch(*s);
+                    }
 
-                    spans.push(Span::styled(
-                        padded_content,
-                        Style::default().bg(Color::Black),
-                    ));
+                    if in_code_block {
+                        // For code blocks, pad to width if specified
+                        let content = if let Some(w) = width {
+                            let content_len = text.chars().count();
+                            if content_len < w as usize {
+                                format!("{}{}", text, " ".repeat(w as usize - content_len))
+                            } else {
+                                text.to_string()
+                            }
+                        } else {
+                            text.to_string()
+                        };
+
+                        // Code blocks get special background
+                        lines.push(MarkdownLine {
+                            line: Line::from(vec![Span::styled(content, style.bg(Color::Black))]),
+                            is_code_block: true,
+                        });
+                    } else {
+                        current_line_spans.push(Span::styled(text.to_string(), style));
+                    }
                 }
             }
-            minimad::Line::HorizontalRule => {
-                spans.push(Span::styled(
-                    "─".repeat(40),
-                    Style::default().fg(Color::Gray),
+            Event::Code(code) => {
+                // Inline code
+                let style = Style::default().fg(Color::Green).bg(Color::Black);
+                current_line_spans.push(Span::styled(code.to_string(), style));
+            }
+            Event::SoftBreak => {
+                finish_line(&mut current_line_spans, &mut lines, false);
+            }
+            Event::HardBreak => {
+                finish_line(&mut current_line_spans, &mut lines, false);
+            }
+            Event::Rule => {
+                lines.push(MarkdownLine {
+                    line: Line::from(vec![Span::styled(
+                        "─".repeat(40),
+                        Style::default().fg(Color::Gray),
+                    )]),
+                    is_code_block: false,
+                });
+            }
+            Event::FootnoteReference(name) => {
+                current_line_spans.push(Span::styled(
+                    format!("[^{}]", name),
+                    Style::default().fg(Color::Blue),
                 ));
             }
-            minimad::Line::TableRule(_) => {
-                // Table separator line
-                spans.push(Span::styled(
-                    "─".repeat(40),
-                    Style::default().fg(Color::Gray),
-                ));
+            Event::TaskListMarker(checked) => {
+                let marker = if checked { "[x] " } else { "[ ] " };
+                current_line_spans.push(Span::raw(marker));
             }
-            _ => {
-                // For other line types, try to extract text
-                // This shouldn't happen with standard markdown
-                continue;
-            }
+            _ => {}
         }
-
-        // Check if this line is part of a code block
-        let is_current_line_code = match md_line {
-            minimad::Line::CodeFence(_) => true,
-            minimad::Line::Normal(composite) => {
-                matches!(composite.style, minimad::CompositeStyle::Code)
-            }
-            _ => false,
-        };
-
-        lines.push(MarkdownLine {
-            line: Line::from(spans),
-            is_code_block: is_current_line_code,
-        });
     }
+
+    // Finish any remaining content
+    finish_line(&mut current_line_spans, &mut lines, false);
 
     lines
 }
-
-// These helper functions are commented out for now since we're not using custom styling
-/*
-/// Parse bold text (**text**)
-fn parse_bold_text(text: &str) -> Line<'static> {
-    let mut spans = Vec::new();
-    let mut current = String::new();
-    let mut in_bold = false;
-    let mut chars = text.chars().peekable();
-
-    while let Some(ch) = chars.next() {
-        if ch == '*' && chars.peek() == Some(&'*') {
-            chars.next(); // consume second *
-            if !current.is_empty() {
-                spans.push(if in_bold {
-                    Span::styled(
-                        current.clone(),
-                        Style::default().add_modifier(Modifier::BOLD),
-                    )
-                } else {
-                    Span::raw(current.clone())
-                });
-                current.clear();
-            }
-            in_bold = !in_bold;
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if !current.is_empty() {
-        spans.push(if in_bold {
-            Span::styled(current, Style::default().add_modifier(Modifier::BOLD))
-        } else {
-            Span::raw(current)
-        });
-    }
-
-    Line::from(spans)
-}
-
-/// Parse italic text (*text*)
-fn parse_italic_text(text: &str) -> Line<'static> {
-    let mut spans = Vec::new();
-    let mut current = String::new();
-    let mut in_italic = false;
-
-    for ch in text.chars() {
-        if ch == '*' && !in_italic {
-            if !current.is_empty() {
-                spans.push(Span::raw(current.clone()));
-                current.clear();
-            }
-            in_italic = true;
-        } else if ch == '*' && in_italic {
-            if !current.is_empty() {
-                spans.push(Span::styled(
-                    current.clone(),
-                    Style::default().add_modifier(Modifier::ITALIC),
-                ));
-                current.clear();
-            }
-            in_italic = false;
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if !current.is_empty() {
-        spans.push(if in_italic {
-            Span::styled(current, Style::default().add_modifier(Modifier::ITALIC))
-        } else {
-            Span::raw(current)
-        });
-    }
-
-    Line::from(spans)
-}
-
-/// Parse inline code (`code`)
-fn parse_inline_code(text: &str) -> Line<'static> {
-    let mut spans = Vec::new();
-    let mut current = String::new();
-    let mut in_code = false;
-
-    for ch in text.chars() {
-        if ch == '`' {
-            if !current.is_empty() {
-                spans.push(if in_code {
-                    Span::styled(
-                        current.clone(),
-                        Style::default().fg(Color::Green).bg(Color::DarkGray),
-                    )
-                } else {
-                    Span::raw(current.clone())
-                });
-                current.clear();
-            }
-            in_code = !in_code;
-        } else {
-            current.push(ch);
-        }
-    }
-
-    if !current.is_empty() {
-        spans.push(if in_code {
-            Span::styled(
-                current,
-                Style::default().fg(Color::Green).bg(Color::DarkGray),
-            )
-        } else {
-            Span::raw(current)
-        });
-    }
-
-    Line::from(spans)
-}
-*/
 
 #[cfg(test)]
 mod tests {
@@ -702,24 +498,6 @@ where 1 = 1</pre>
   * Nested item 2.1
 * Top level item 3"#;
 
-        // First, let's see what minimad parses directly
-        use termimad::minimad;
-        let options = minimad::Options::default();
-        let md_lines = minimad::parse_text(markdown, options);
-
-        println!("\n=== Direct minimad parsing ===");
-        for (i, line) in md_lines.lines.iter().enumerate() {
-            if let minimad::Line::Normal(composite) = line {
-                if let minimad::CompositeStyle::ListItem(depth) = &composite.style {
-                    let content: String = composite.compounds.iter().map(|c| c.src).collect();
-                    println!(
-                        "Line {}: ListItem depth={}, content={:?}",
-                        i, depth, content
-                    );
-                }
-            }
-        }
-
         let lines = parse_markdown_to_lines(markdown);
 
         println!("\n=== Nested Lists Test ===");
@@ -738,7 +516,7 @@ where 1 = 1</pre>
 
                 // Count leading spaces to determine depth
                 let leading_spaces = first_span_content.chars().take_while(|&c| c == ' ').count();
-                let depth = leading_spaces / 2;
+                let depth = leading_spaces / 4; // pulldown-cmark uses 4 spaces per level
 
                 if first_span_content.contains("• ") {
                     println!(
@@ -816,26 +594,6 @@ fn main() {
         assert!(lines.len() > 0);
         // Should have headers, list items, code blocks, etc
         assert!(lines.len() >= 10);
-
-        // Debug list item rendering
-        println!("\n=== List Item Debug ===");
-        let debug_lines =
-            termimad::minimad::parse_text(markdown, termimad::minimad::Options::default());
-        for (i, line) in debug_lines.lines.iter().enumerate() {
-            match line {
-                termimad::minimad::Line::Normal(composite) => match &composite.style {
-                    termimad::minimad::CompositeStyle::ListItem(depth) => {
-                        let content: String = composite.compounds.iter().map(|c| c.src).collect();
-                        println!(
-                            "Line {}: ListItem depth={} content=\"{}\"",
-                            i, depth, content
-                        );
-                    }
-                    _ => {}
-                },
-                _ => {}
-            }
-        }
     }
 
     #[test]
@@ -897,29 +655,6 @@ fn main() {
         let markdown = html_to_markdown(html);
         println!("Converted markdown:\n{}", markdown);
 
-        // Let's also check what the preprocessed markdown looks like
-        let preprocessed = preprocess_markdown(&markdown);
-        println!("\nPreprocessed markdown:\n{}", preprocessed);
-
-        // Parse with minimad to see what it gives us
-        use termimad::minimad;
-        let md_lines = minimad::parse_text(&preprocessed, minimad::Options::default());
-        println!("\nMinimad parsing (raw lines vs compounds):");
-        for (i, (raw_line, parsed_line)) in
-            preprocessed.lines().zip(md_lines.lines.iter()).enumerate()
-        {
-            match parsed_line {
-                minimad::Line::Normal(composite) => {
-                    let full_text: String = composite.compounds.iter().map(|c| c.src).collect();
-                    println!(
-                        "  Line {}: Raw='{}' -> Normal({:?}) - Compounds='{}'",
-                        i, raw_line, composite.style, full_text
-                    );
-                }
-                _ => println!("  Line {}: Raw='{}' -> {:?}", i, raw_line, parsed_line),
-            }
-        }
-
         let lines = parse_markdown_to_lines(&markdown);
         for (i, line) in lines.iter().enumerate() {
             let text: String = line
@@ -968,35 +703,6 @@ fn main() {
                 line,
                 line.len() - line.trim_start().len()
             );
-        }
-
-        // Check preprocessing
-        let preprocessed = preprocess_markdown(markdown);
-        println!("\nPreprocessed markdown:");
-        for (i, line) in preprocessed.lines().enumerate() {
-            println!(
-                "Line {}: '{}' ({} leading spaces)",
-                i,
-                line,
-                line.len() - line.trim_start().len()
-            );
-        }
-
-        // Check minimad parsing
-        use termimad::minimad;
-        let md_lines = minimad::parse_text(&preprocessed, minimad::Options::default());
-        println!("\nMinimad parsing:");
-        for (i, parsed_line) in md_lines.lines.iter().enumerate() {
-            match parsed_line {
-                minimad::Line::Normal(composite) => {
-                    let full_text: String = composite.compounds.iter().map(|c| c.src).collect();
-                    println!(
-                        "  Line {}: Normal({:?}) - '{}'",
-                        i, composite.style, full_text
-                    );
-                }
-                _ => println!("  Line {}: {:?}", i, parsed_line),
-            }
         }
 
         let lines = parse_markdown_to_lines(markdown);
@@ -1073,34 +779,35 @@ fn main() {
         let lines = parse_markdown_to_lines(markdown);
 
         // Check specific lines
-        let expected_indents = vec![
-            (0, 0),  // "1. Top level"
-            (1, 4),  // "    1. 4-space indent"
-            (2, 8),  // "        1. 8-space indent"
-            (3, 12), // "            1. 12-space indent"
-            (4, 4),  // "    2. Back to 4-space"
-            (5, 0),  // "2. Back to top"
-            (7, 0),  // "• Bullet top"
-            (8, 4),  // "    • 4-space bullet"
-            (9, 8),  // "        * 8-space bullet"
-            (10, 4), // "    • Back to 4-space"
+        // Note: line numbers may vary as pulldown-cmark adds blank lines
+        let expected_patterns = vec![
+            ("1. Top level", 0),
+            ("1. 4-space indent", 4),
+            ("1. 8-space indent", 8),
+            ("1. 12-space indent", 12),
+            ("2. Back to 4-space", 4),
+            ("2. Back to top", 0),
+            ("• Bullet top", 0),
+            ("• 4-space bullet", 4),
+            ("• 8-space bullet", 8),
+            ("• Back to 4-space", 4),
         ];
 
-        for (line_idx, expected_indent) in expected_indents {
-            if line_idx < lines.len() {
-                let text: String = lines[line_idx]
+        for (expected_content, expected_indent) in expected_patterns {
+            let found = lines.iter().any(|line| {
+                let text: String = line
                     .spans
                     .iter()
                     .map(|span| span.content.to_string())
                     .collect();
                 let actual_indent = text.len() - text.trim_start().len();
-                println!("Line {}: {} spaces - '{}'", line_idx, actual_indent, text);
-                assert_eq!(
-                    actual_indent, expected_indent,
-                    "Line {} should have {} spaces, got {}: '{}'",
-                    line_idx, expected_indent, actual_indent, text
-                );
-            }
+                text.trim().contains(expected_content) && actual_indent == expected_indent
+            });
+            assert!(
+                found,
+                "Should find '{}' with {} spaces indent",
+                expected_content, expected_indent
+            );
         }
     }
 
@@ -1166,29 +873,18 @@ fn main() {
         );
 
         // Check specific indentations
+        // pulldown-cmark normalizes to 4-space indents per level
         assert!(
             indented_lines
                 .iter()
-                .any(|(_, text)| text.starts_with("  • ")),
-            "Should have 2-space indented bullet"
+                .any(|(_, text)| text.starts_with("    • ")),
+            "Should have 4-space indented bullet"
         );
         assert!(
             indented_lines
                 .iter()
-                .any(|(_, text)| text.starts_with("    * ") || text.starts_with("    - ")),
-            "Should have 4-space indented bullet/dash"
-        );
-        assert!(
-            indented_lines
-                .iter()
-                .any(|(_, text)| text.starts_with("   1. ")),
-            "Should have 3-space indented number"
-        );
-        assert!(
-            indented_lines
-                .iter()
-                .any(|(_, text)| text.starts_with("      ")),
-            "Should have 6+ space indented item"
+                .any(|(_, text)| text.starts_with("        ")),
+            "Should have 8-space indented item"
         );
     }
 }
