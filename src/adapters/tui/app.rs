@@ -90,6 +90,47 @@ impl App {
         }
     }
 
+    /// Format comment lines with proper markdown parsing
+    fn format_comment_lines(text: &str, max_width: Option<u16>) -> Vec<md::MarkdownLine> {
+        let mut lines = Vec::new();
+
+        // Convert markdown to lines first
+        let parsed_lines = md::parse_markdown_to_marked_lines(text, max_width);
+
+        for parsed_line in parsed_lines {
+            // Skip empty lines from markdown parsing
+            if parsed_line.line.spans.is_empty() {
+                continue;
+            }
+
+            // Add the original spans but make them white if no color is set
+            let mut new_spans = Vec::new();
+            for span in parsed_line.line.spans {
+                let mut new_style = span.style;
+                if new_style.fg.is_none() {
+                    new_style = new_style.fg(Color::White);
+                }
+                new_spans.push(Span::styled(span.content, new_style));
+            }
+
+            lines.push(md::MarkdownLine {
+                line: Line::from(new_spans),
+                is_code_block: parsed_line.is_code_block,
+            });
+        }
+
+        lines
+    }
+
+    /// Format activity text with colors: text in white, timestamp in gray
+    fn format_activity_line(activity_text: &str, timestamp: &str) -> Vec<Span<'static>> {
+        vec![
+            Span::styled(activity_text.to_string(), Style::default().fg(Color::White)),
+            Span::raw(" • "),
+            Span::styled(timestamp.to_string(), Style::default().fg(Color::Gray)),
+        ]
+    }
+
     pub fn new(state_manager: Arc<StateManager>) -> Self {
         let mut app = Self {
             state_manager,
@@ -283,7 +324,8 @@ impl App {
                     for comment in &user_comments {
                         comments_content_lines += 1; // Author line
                         if let Some(ref text) = comment.text {
-                            comments_content_lines += text.lines().count() as u16; // Text lines
+                            comments_content_lines += text.lines().count() as u16;
+                            // Text lines
                         }
                         comments_content_lines += 1; // Spacing
                     }
@@ -294,7 +336,8 @@ impl App {
                     for activity in &system_activity {
                         comments_content_lines += 1; // Author line
                         if let Some(ref text) = activity.text {
-                            comments_content_lines += text.lines().count() as u16; // Text lines
+                            comments_content_lines += text.lines().count() as u16;
+                            // Text lines
                         }
                         comments_content_lines += 1; // Spacing
                     }
@@ -1147,17 +1190,12 @@ impl App {
                             .unwrap_or_else(|| "Unknown".to_string());
                         let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
 
+                        // Header: Name • timestamp
                         lines.push(md::MarkdownLine {
                             line: Line::from(vec![
-                                Span::styled("• ", Style::default().fg(Color::Yellow)),
+                                Span::styled(author_name, Style::default().fg(Color::Blue)),
                                 Span::styled(
-                                    author_name,
-                                    Style::default()
-                                        .fg(Color::Yellow)
-                                        .add_modifier(Modifier::BOLD),
-                                ),
-                                Span::styled(
-                                    format!(" ({})", time_display),
+                                    format!(" • {}", time_display),
                                     Style::default().fg(Color::Gray),
                                 ),
                             ]),
@@ -1166,10 +1204,8 @@ impl App {
 
                         if let Some(ref text) = comment.text {
                             let cleaned_text = md::html_to_markdown(text);
-                            lines.push(md::MarkdownLine {
-                                line: Line::from(vec![Span::raw(format!("  {}", cleaned_text))]),
-                                is_code_block: false,
-                            });
+                            let comment_lines = Self::format_comment_lines(&cleaned_text, None);
+                            lines.extend(comment_lines);
                         }
                         lines.push(md::MarkdownLine {
                             line: Line::from(""),
@@ -1196,15 +1232,19 @@ impl App {
 
                     for activity in &system_activity {
                         let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                        let cleaned_text = activity.text.as_ref()
+                        let cleaned_text = activity
+                            .text
+                            .as_ref()
                             .map(|text| md::html_to_markdown(text))
                             .unwrap_or_else(|| "[No text content]".to_string());
 
+                        let mut activity_spans =
+                            vec![Span::styled("• ", Style::default().fg(Color::Blue))];
+                        activity_spans
+                            .extend(Self::format_activity_line(&cleaned_text, &time_display));
+
                         lines.push(md::MarkdownLine {
-                            line: Line::from(vec![
-                                Span::styled("• ", Style::default().fg(Color::Blue)),
-                                Span::raw(format!("{} ({})", cleaned_text, time_display)),
-                            ]),
+                            line: Line::from(activity_spans),
                             is_code_block: false,
                         });
                     }
@@ -1707,23 +1747,19 @@ impl App {
                         .unwrap_or("Unknown");
                     let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
 
+                    // Header: Name • timestamp
                     lines.push(Line::from(vec![
-                        Span::styled("• ", Style::default().fg(Color::Yellow)),
+                        Span::styled(author_name, Style::default().fg(Color::Blue)),
                         Span::styled(
-                            author_name,
-                            Style::default()
-                                .fg(Color::Yellow)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                        Span::styled(
-                            format!(" ({})", time_display),
+                            format!(" • {}", time_display),
                             Style::default().fg(Color::Gray),
                         ),
                     ]));
 
                     if let Some(ref text) = comment.text {
                         let cleaned_text = md::html_to_markdown(text);
-                        lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                        let comment_lines = Self::format_comment_lines(&cleaned_text, None);
+                        lines.extend(comment_lines.into_iter().map(|ml| ml.line));
                     }
                     lines.push(Line::from(""));
                 }
@@ -1741,14 +1777,17 @@ impl App {
 
                 for activity in &system_activity {
                     let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                    let cleaned_text = activity.text.as_ref()
+                    let cleaned_text = activity
+                        .text
+                        .as_ref()
                         .map(|text| md::html_to_markdown(text))
                         .unwrap_or_else(|| "[No text content]".to_string());
 
-                    lines.push(Line::from(vec![
-                        Span::styled("• ", Style::default().fg(Color::Blue)),
-                        Span::raw(format!("{} ({})", cleaned_text, time_display)),
-                    ]));
+                    let mut activity_spans =
+                        vec![Span::styled("• ", Style::default().fg(Color::Blue))];
+                    activity_spans.extend(Self::format_activity_line(&cleaned_text, &time_display));
+
+                    lines.push(Line::from(activity_spans));
                 }
             }
         }
@@ -1862,21 +1901,20 @@ impl App {
                         .unwrap_or("Unknown");
                     let time_display = comment.created_at.format("%Y-%m-%d %H:%M").to_string();
 
+                    // Header: Name • timestamp
                     lines.push(Line::from(vec![
+                        Span::styled(author_name, Style::default().fg(Color::Blue)),
                         Span::styled(
-                            format!("{author_name} • "),
-                            Style::default()
-                                .fg(Color::Blue)
-                                .add_modifier(Modifier::BOLD),
+                            format!(" • {}", time_display),
+                            Style::default().fg(Color::Gray),
                         ),
-                        Span::styled(time_display, Style::default().fg(Color::Gray)),
                     ]));
 
-                    // Comment text with word wrapping
+                    // Comment text with proper markdown parsing and ┃ prefix
                     if let Some(ref text) = comment.text {
-                        for line in text.lines() {
-                            lines.push(Line::from(line));
-                        }
+                        let cleaned_text = md::html_to_markdown(text);
+                        let comment_lines = Self::format_comment_lines(&cleaned_text, None);
+                        lines.extend(comment_lines.into_iter().map(|ml| ml.line));
                     }
                     lines.push(Line::from(""));
                 }
@@ -1901,14 +1939,18 @@ impl App {
                         _ => "•",
                     };
 
-                    lines.push(Line::from(vec![
-                        Span::styled(format!("{icon} "), Style::default().fg(Color::Yellow)),
-                        Span::raw(activity.text.as_ref().unwrap_or(&"[No text content]".to_string()).clone()),
-                        Span::styled(
-                            format!(" ({time_display})"),
-                            Style::default().fg(Color::Gray),
-                        ),
-                    ]));
+                    let activity_text = activity
+                        .text
+                        .as_ref()
+                        .map(|s| s.as_str())
+                        .unwrap_or("[No text content]");
+                    let mut activity_spans = vec![Span::styled(
+                        format!("{icon} "),
+                        Style::default().fg(Color::Yellow),
+                    )];
+                    activity_spans.extend(Self::format_activity_line(activity_text, &time_display));
+
+                    lines.push(Line::from(activity_spans));
                 }
             }
         }

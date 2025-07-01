@@ -417,9 +417,9 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                         let text_str = text.to_string();
                         let code_lines: Vec<&str> = text_str.split('\n').collect();
 
-                        for (i, line_text) in code_lines.iter().enumerate() {
-                            // Skip empty lines between actual lines (but keep truly empty lines)
-                            if i > 0 || !line_text.is_empty() || code_lines.len() == 1 {
+                        for line_text in code_lines.iter() {
+                            // Skip empty lines, especially the trailing empty line from split
+                            if !line_text.is_empty() || (code_lines.len() == 1) {
                                 // Pad to width if specified
                                 let content = if let Some(w) = width {
                                     let content_len = line_text.chars().count();
@@ -453,7 +453,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
             }
             Event::Code(code) => {
                 // Inline code
-                let style = Style::default().fg(Color::Green).bg(Color::Black);
+                let style = Style::default().fg(Color::White).bg(Color::Black);
                 current_line_spans.push(Span::styled(code.to_string(), style));
             }
             Event::SoftBreak => {
