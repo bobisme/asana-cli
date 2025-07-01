@@ -32,6 +32,8 @@ pub struct TaskDto {
     pub created_at: String,
     pub modified_at: String,
     pub workspace: Option<WorkspaceDto>,
+    pub resource_type: Option<String>,
+    pub resource_subtype: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -141,6 +143,8 @@ impl From<TaskDto> for Task {
                     .map(|w| w.gid)
                     .unwrap_or_else(|| "unknown".to_string()),
             ),
+            resource_type: dto.resource_type,
+            resource_subtype: dto.resource_subtype,
         }
     }
 }

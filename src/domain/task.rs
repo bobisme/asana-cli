@@ -37,6 +37,8 @@ pub struct Task {
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
     pub workspace: super::WorkspaceId,
+    pub resource_type: Option<String>,
+    pub resource_subtype: Option<String>,
 }
 
 impl Task {
@@ -76,6 +78,20 @@ impl Task {
                     _ => due.format("%Y-%m-%d").to_string(),
                 }
             }
+        }
+    }
+
+    /// Check if this task is a milestone
+    pub fn is_milestone(&self) -> bool {
+        self.resource_subtype.as_deref() == Some("milestone")
+    }
+
+    /// Get the appropriate icon for this task type
+    pub fn type_icon(&self) -> &'static str {
+        if self.is_milestone() {
+            "◇" // Milestone
+        } else {
+            "●" // Task
         }
     }
 }

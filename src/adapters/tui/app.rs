@@ -816,8 +816,13 @@ impl App {
                 } else {
                     Style::default()
                 };
+
+                // Get icon based on task type
+                let icon = task.type_icon();
+                let title_with_icon = format!("{} {}", icon, task.name);
+
                 Row::new([
-                    Cell::from(task.name.as_str()),
+                    Cell::from(title_with_icon),
                     Cell::from(status_text),
                     Cell::from(due_text).style(due_style),
                 ])
@@ -1330,8 +1335,12 @@ impl App {
                     Style::default()
                 };
 
+                // Get icon based on task type
+                let icon = task.type_icon();
+                let title_with_icon = format!("{} {}", icon, task.name);
+
                 Row::new(vec![
-                    Cell::from(task.name.clone()),
+                    Cell::from(title_with_icon),
                     Cell::from(due_text).style(due_style),
                 ])
             })
