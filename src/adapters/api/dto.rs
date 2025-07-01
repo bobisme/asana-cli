@@ -75,7 +75,7 @@ pub struct TagDto {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CommentDto {
     pub gid: String,
-    pub text: String,
+    pub text: Option<String>,
     pub created_by: Option<UserDto>,
     pub created_at: String,
     #[serde(rename = "type")]

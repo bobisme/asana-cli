@@ -282,7 +282,9 @@ impl App {
                     comments_content_lines += 2; // "Comments" header + spacing
                     for comment in &user_comments {
                         comments_content_lines += 1; // Author line
-                        comments_content_lines += comment.text.lines().count() as u16; // Text lines
+                        if let Some(ref text) = comment.text {
+                            comments_content_lines += text.lines().count() as u16; // Text lines
+                        }
                         comments_content_lines += 1; // Spacing
                     }
                 }
@@ -291,7 +293,9 @@ impl App {
                     comments_content_lines += 2; // "Activity" header + spacing
                     for activity in &system_activity {
                         comments_content_lines += 1; // Author line
-                        comments_content_lines += activity.text.lines().count() as u16; // Text lines
+                        if let Some(ref text) = activity.text {
+                            comments_content_lines += text.lines().count() as u16; // Text lines
+                        }
                         comments_content_lines += 1; // Spacing
                     }
                 }
@@ -1160,11 +1164,13 @@ impl App {
                             is_code_block: false,
                         });
 
-                        let cleaned_text = md::html_to_markdown(&comment.text);
-                        lines.push(md::MarkdownLine {
-                            line: Line::from(vec![Span::raw(format!("  {}", cleaned_text))]),
-                            is_code_block: false,
-                        });
+                        if let Some(ref text) = comment.text {
+                            let cleaned_text = md::html_to_markdown(text);
+                            lines.push(md::MarkdownLine {
+                                line: Line::from(vec![Span::raw(format!("  {}", cleaned_text))]),
+                                is_code_block: false,
+                            });
+                        }
                         lines.push(md::MarkdownLine {
                             line: Line::from(""),
                             is_code_block: false,
@@ -1190,7 +1196,9 @@ impl App {
 
                     for activity in &system_activity {
                         let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                        let cleaned_text = md::html_to_markdown(&activity.text);
+                        let cleaned_text = activity.text.as_ref()
+                            .map(|text| md::html_to_markdown(text))
+                            .unwrap_or_else(|| "[No text content]".to_string());
 
                         lines.push(md::MarkdownLine {
                             line: Line::from(vec![
@@ -1713,8 +1721,10 @@ impl App {
                         ),
                     ]));
 
-                    let cleaned_text = md::html_to_markdown(&comment.text);
-                    lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    if let Some(ref text) = comment.text {
+                        let cleaned_text = md::html_to_markdown(text);
+                        lines.push(Line::from(vec![Span::raw(format!("  {}", cleaned_text))]));
+                    }
                     lines.push(Line::from(""));
                 }
             }
@@ -1731,7 +1741,9 @@ impl App {
 
                 for activity in &system_activity {
                     let time_display = activity.created_at.format("%Y-%m-%d %H:%M").to_string();
-                    let cleaned_text = md::html_to_markdown(&activity.text);
+                    let cleaned_text = activity.text.as_ref()
+                        .map(|text| md::html_to_markdown(text))
+                        .unwrap_or_else(|| "[No text content]".to_string());
 
                     lines.push(Line::from(vec![
                         Span::styled("• ", Style::default().fg(Color::Blue)),
@@ -1861,8 +1873,10 @@ impl App {
                     ]));
 
                     // Comment text with word wrapping
-                    for line in comment.text.lines() {
-                        lines.push(Line::from(line));
+                    if let Some(ref text) = comment.text {
+                        for line in text.lines() {
+                            lines.push(Line::from(line));
+                        }
                     }
                     lines.push(Line::from(""));
                 }
@@ -1889,7 +1903,7 @@ impl App {
 
                     lines.push(Line::from(vec![
                         Span::styled(format!("{icon} "), Style::default().fg(Color::Yellow)),
-                        Span::raw(activity.text.clone()),
+                        Span::raw(activity.text.as_ref().unwrap_or(&"[No text content]".to_string()).clone()),
                         Span::styled(
                             format!(" ({time_display})"),
                             Style::default().fg(Color::Gray),

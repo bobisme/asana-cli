@@ -26,7 +26,7 @@ impl From<&str> for CommentId {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Comment {
     pub id: CommentId,
-    pub text: String,
+    pub text: Option<String>,
     pub author: Option<super::User>,
     pub created_at: DateTime<Utc>,
     pub task_id: super::TaskId,
