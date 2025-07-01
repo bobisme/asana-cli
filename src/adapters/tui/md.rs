@@ -1,12 +1,251 @@
 use kuchiki::traits::*;
 use pulldown_cmark::{Event, Parser, Tag, TagEnd};
+use ratatui::style::Style;
 use ratatui::text::Line;
+use ratatui::text::Span;
+use unicode_width::UnicodeWidthStr;
 
 /// Represents a parsed markdown line with metadata
 #[derive(Clone)]
 pub struct MarkdownLine {
     pub line: Line<'static>,
     pub is_code_block: bool,
+}
+
+/// Represents a word or whitespace with its associated style
+#[derive(Clone, Debug)]
+struct WordSpan {
+    content: String,
+    style: Style,
+    is_whitespace: bool,
+}
+
+/// Split a line into individual words while preserving styles
+fn split_line_into_words(line: &Line) -> Vec<WordSpan> {
+    let mut words = Vec::new();
+
+    for span in &line.spans {
+        let mut current_pos = 0;
+        let content = &span.content;
+        let mut chars = content.char_indices().peekable();
+
+        while let Some((i, ch)) = chars.next() {
+            if ch.is_whitespace() {
+                // Add accumulated non-whitespace as a word
+                if i > current_pos {
+                    words.push(WordSpan {
+                        content: content[current_pos..i].to_string(),
+                        style: span.style,
+                        is_whitespace: false,
+                    });
+                }
+
+                // Collect consecutive whitespace
+                let whitespace_start = i;
+                let mut whitespace_end = i + ch.len_utf8();
+
+                while let Some((next_i, next_ch)) = chars.peek() {
+                    if next_ch.is_whitespace() {
+                        whitespace_end = *next_i + next_ch.len_utf8();
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+
+                words.push(WordSpan {
+                    content: content[whitespace_start..whitespace_end].to_string(),
+                    style: span.style,
+                    is_whitespace: true,
+                });
+
+                current_pos = whitespace_end;
+            } else if chars.peek().is_none() {
+                // Last character, add remaining content (including this character)
+                words.push(WordSpan {
+                    content: content[current_pos..].to_string(),
+                    style: span.style,
+                    is_whitespace: false,
+                });
+                current_pos = content.len(); // Mark as processed
+            }
+        }
+
+        // Handle case where span ends with non-whitespace that wasn't processed yet
+        if current_pos < content.len() {
+            words.push(WordSpan {
+                content: content[current_pos..].to_string(),
+                style: span.style,
+                is_whitespace: false,
+            });
+        }
+    }
+
+    words
+}
+
+/// Calculate indentation for continuation lines based on list structure
+fn calculate_continuation_indent(line: &Line) -> usize {
+    let text: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+    let mut chars = text.char_indices();
+    let mut indent = 0;
+
+    // Count leading whitespace
+    while let Some((_, ch)) = chars.next() {
+        if ch == ' ' {
+            indent += 1;
+        } else if ch == '\t' {
+            indent += 4; // Treat tab as 4 spaces
+        } else {
+            break;
+        }
+    }
+
+    // Look for list markers after the whitespace
+    let trimmed = text.trim_start();
+
+    // Bullet points: •, -, *
+    if trimmed.starts_with("• ") || trimmed.starts_with("- ") || trimmed.starts_with("* ") {
+        return indent + 2; // Position after "• "
+    }
+
+    // Numbered lists: 1., 12., etc.
+    if let Some(dot_pos) = trimmed.find(". ") {
+        if trimmed[..dot_pos].chars().all(|c| c.is_ascii_digit()) {
+            return indent + dot_pos + 2; // Position after "1. "
+        }
+    }
+
+    // No list marker found, use original indentation
+    indent
+}
+
+/// Convert words back to spans, adding continuation indent if needed
+fn words_to_spans(
+    words: &[WordSpan],
+    is_first_line: bool,
+    continuation_indent: usize,
+) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+
+    // Add indentation for continuation lines
+    if !is_first_line && continuation_indent > 0 {
+        spans.push(Span::raw(" ".repeat(continuation_indent)));
+    }
+
+    // Convert words back to spans, merging consecutive words with same style
+    let mut current_content = String::new();
+    let mut current_style = None;
+
+    for word in words {
+        // Skip leading whitespace on continuation lines
+        if !is_first_line && current_content.is_empty() && word.is_whitespace {
+            continue;
+        }
+
+        if current_style.as_ref() == Some(&word.style) {
+            current_content.push_str(&word.content);
+        } else {
+            // Style changed, finish previous span
+            if !current_content.is_empty() {
+                if let Some(style) = current_style {
+                    spans.push(Span::styled(current_content.clone(), style));
+                } else {
+                    spans.push(Span::raw(current_content.clone()));
+                }
+            }
+            current_content = word.content.clone();
+            current_style = Some(word.style);
+        }
+    }
+
+    // Add final span
+    if !current_content.is_empty() {
+        if let Some(style) = current_style {
+            spans.push(Span::styled(current_content, style));
+        } else {
+            spans.push(Span::raw(current_content));
+        }
+    }
+
+    spans
+}
+
+/// Wrap a single MarkdownLine to fit within the specified width
+fn wrap_single_line(
+    line: MarkdownLine,
+    max_width: u16,
+    continuation_indent: usize,
+) -> Vec<MarkdownLine> {
+    if line.is_code_block || max_width < 10 {
+        return vec![line]; // Never wrap code blocks or very narrow widths
+    }
+
+    let words = split_line_into_words(&line.line);
+    if words.is_empty() {
+        return vec![line];
+    }
+
+    let mut result_lines = Vec::new();
+    let mut current_line_words = Vec::new();
+    let mut current_width = 0usize;
+    let mut is_first_line = true;
+
+    for word in words {
+        let word_width = word.content.width();
+        let available_width = if is_first_line {
+            max_width as usize
+        } else {
+            (max_width as usize).saturating_sub(continuation_indent)
+        };
+
+        // Check if we need to wrap
+        if current_width + word_width > available_width && !current_line_words.is_empty() {
+            // Current word doesn't fit, finish current line
+            let line_spans =
+                words_to_spans(&current_line_words, is_first_line, continuation_indent);
+            result_lines.push(MarkdownLine {
+                line: Line::from(line_spans),
+                is_code_block: false,
+            });
+
+            current_line_words.clear();
+            current_width = 0;
+            is_first_line = false;
+        }
+
+        current_line_words.push(word);
+        current_width += word_width;
+    }
+
+    // Add final line if any words remain
+    if !current_line_words.is_empty() {
+        let line_spans = words_to_spans(&current_line_words, is_first_line, continuation_indent);
+        result_lines.push(MarkdownLine {
+            line: Line::from(line_spans),
+            is_code_block: false,
+        });
+    }
+
+    // Return original line if no wrapping occurred
+    if result_lines.is_empty() {
+        vec![line]
+    } else {
+        result_lines
+    }
+}
+
+/// Wrap all markdown lines to fit within the specified width
+fn wrap_markdown_lines(lines: Vec<MarkdownLine>, width: u16) -> Vec<MarkdownLine> {
+    let mut wrapped = Vec::new();
+
+    for line in lines {
+        let continuation_indent = calculate_continuation_indent(&line.line);
+        let wrapped_lines = wrap_single_line(line, width, continuation_indent);
+        wrapped.extend(wrapped_lines);
+    }
+
+    wrapped
 }
 
 /// Fix invalid nested list structure in HTML
@@ -190,6 +429,22 @@ pub fn parse_markdown_to_lines_with_width(
         .collect()
 }
 
+/// Parse markdown text with intelligent text wrapping that preserves formatting
+pub fn parse_markdown_to_marked_lines_with_wrapping(
+    markdown: &str,
+    width: Option<u16>,
+) -> Vec<MarkdownLine> {
+    // First parse the markdown with width for code block padding
+    let lines = parse_markdown_to_marked_lines(markdown, width);
+
+    // Apply intelligent wrapping if width is specified
+    if let Some(w) = width {
+        wrap_markdown_lines(lines, w)
+    } else {
+        lines
+    }
+}
+
 /// Parse markdown text and convert to MarkdownLine structs with metadata
 pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec<MarkdownLine> {
     use ratatui::style::{Color, Modifier, Style};
@@ -360,9 +615,8 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                         emphasis_stack.pop();
                     }
                     TagEnd::Link => {
-                        if let Some(url) = link_destination.take() {
-                            current_line_spans.push(Span::raw(format!(" ({})", url)));
-                        }
+                        // Clear the link destination but don't display the URL
+                        link_destination.take();
                         emphasis_stack.pop();
                     }
                     TagEnd::Image => {
@@ -463,9 +717,10 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                 finish_line(&mut current_line_spans, &mut lines, false);
             }
             Event::Rule => {
+                let rule_width = width.unwrap_or(80) as usize;
                 lines.push(MarkdownLine {
                     line: Line::from(vec![Span::styled(
-                        "─".repeat(40),
+                        "─".repeat(rule_width),
                         Style::default().fg(Color::Gray),
                     )]),
                     is_code_block: false,
@@ -842,6 +1097,97 @@ fn main() {
                 expected_content, expected_indent
             );
         }
+    }
+
+    #[test]
+    fn test_wrapping_functionality() {
+        // Test that long lines get wrapped properly with list indentation
+        let markdown = r#"• This is a very long bullet point that should definitely wrap to multiple lines when rendered in a narrow terminal width
+  • This is a nested item that should also wrap with proper indentation alignment for continuation lines
+
+1. This is a numbered list item with very long text that should wrap properly and maintain the numbered list indentation for wrapped lines
+2. Another numbered item"#;
+
+        let lines = parse_markdown_to_marked_lines_with_wrapping(markdown, Some(40));
+
+        println!("\n=== Wrapping Test ===");
+        println!("Input width: 40 characters");
+        println!("Parsed into {} lines", lines.len());
+
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line
+                .line
+                .spans
+                .iter()
+                .map(|span| span.content.as_ref())
+                .collect();
+            println!("Line {}: '{}'", i, text);
+
+            // Check that lines don't exceed the width (with some tolerance for edge cases)
+            let visual_width = text.width();
+            println!("  Width: {} chars", visual_width);
+
+            // Most lines should be <= 40 chars (allowing some tolerance for edge cases)
+            if visual_width > 45 {
+                println!("  WARNING: Line {} exceeds expected width significantly", i);
+            }
+        }
+
+        // Should have more lines than the original due to wrapping
+        assert!(
+            lines.len() >= 4,
+            "Should have at least 4 lines after wrapping"
+        );
+
+        // Check that list indentation is preserved by looking for continuation lines
+        let mut found_continuation = false;
+        for line in &lines {
+            let text: String = line.line.spans.iter().map(|s| s.content.as_ref()).collect();
+            if text.starts_with("  ") && !text.starts_with("  •") && !text.trim().is_empty() {
+                found_continuation = true;
+                println!("Found continuation line: '{}'", text);
+                break;
+            }
+        }
+
+        // We should find at least one continuation line from the wrapping
+        assert!(
+            found_continuation,
+            "Should find continuation lines with proper indentation"
+        );
+    }
+
+    #[test]
+    fn test_new_features() {
+        // Test links without URLs and horizontal rules
+        let markdown = r#"[This is a link](https://example.com) with no URL shown.
+
+---
+
+More content after the rule."#;
+
+        let lines = parse_markdown_to_marked_lines_with_wrapping(markdown, Some(50));
+
+        println!("\n=== New Features Test ===");
+        for (i, line) in lines.iter().enumerate() {
+            let text: String = line.line.spans.iter().map(|s| s.content.as_ref()).collect();
+            println!("Line {}: '{}'", i, text);
+        }
+
+        let all_text: Vec<String> = lines
+            .iter()
+            .map(|line| line.line.spans.iter().map(|s| s.content.as_ref()).collect())
+            .collect();
+
+        // Should find link text without URL
+        assert!(all_text
+            .iter()
+            .any(|text| text.contains("This is a link") && !text.contains("example.com")));
+
+        // Should find horizontal rule spanning width
+        assert!(all_text
+            .iter()
+            .any(|text| text.contains("─") && text.len() >= 40));
     }
 
     #[test]

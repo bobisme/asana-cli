@@ -94,8 +94,8 @@ impl App {
     fn format_comment_lines(text: &str, max_width: Option<u16>) -> Vec<md::MarkdownLine> {
         let mut lines = Vec::new();
 
-        // Convert markdown to lines first
-        let parsed_lines = md::parse_markdown_to_marked_lines(text, max_width);
+        // Convert markdown to lines first with intelligent wrapping
+        let parsed_lines = md::parse_markdown_to_marked_lines_with_wrapping(text, max_width);
 
         for parsed_line in parsed_lines {
             // Skip empty lines from markdown parsing
@@ -287,7 +287,8 @@ impl App {
             if let Some(desc) = &task.description {
                 if !desc.trim().is_empty() {
                     let markdown_desc = md::html_to_markdown(desc);
-                    let styled_lines = md::parse_markdown_to_marked_lines(&markdown_desc, None);
+                    let styled_lines =
+                        md::parse_markdown_to_marked_lines_with_wrapping(&markdown_desc, Some(80));
                     description_content_lines += styled_lines.len() as u16 + 1; // +1 for header
                 }
             } else {
@@ -1078,8 +1079,10 @@ impl App {
             if let Some(description) = &task.description {
                 if !description.trim().is_empty() {
                     let markdown_desc = md::html_to_markdown(description);
-                    let styled_lines =
-                        md::parse_markdown_to_marked_lines(&markdown_desc, Some(area.width));
+                    let styled_lines = md::parse_markdown_to_marked_lines_with_wrapping(
+                        &markdown_desc,
+                        Some(area.width),
+                    );
 
                     lines.extend(styled_lines);
                 }
