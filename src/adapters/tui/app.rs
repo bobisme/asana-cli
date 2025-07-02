@@ -811,18 +811,17 @@ impl App {
             .map(|task| {
                 let (status_text, _) = task.status_display();
                 let due_text = task.due_date_display();
-                let due_style = if task.is_overdue() {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default()
-                };
-
-                // Get icon based on task type
+                // Get icon and color based on task type and due date
                 let icon = task.type_icon();
-                let title_with_icon = format!("{} {}", icon, task.name);
+                let icon_color = task.icon_color();
+                let icon_span = Span::styled(icon, Style::default().fg(icon_color));
+                let title_with_icon = vec![icon_span, Span::raw(" "), Span::raw(&task.name)];
+
+                // Make due dates dark gray
+                let due_style = Style::default().fg(Color::DarkGray);
 
                 Row::new([
-                    Cell::from(title_with_icon),
+                    Cell::from(Line::from(title_with_icon)),
                     Cell::from(status_text),
                     Cell::from(due_text).style(due_style),
                 ])
@@ -1327,20 +1326,17 @@ impl App {
             .map(|task| {
                 let due_text = task.due_date_display();
 
-                // Check if task is overdue for red coloring
-                let is_overdue = task.is_overdue();
-                let due_style = if is_overdue {
-                    Style::default().fg(Color::Red)
-                } else {
-                    Style::default()
-                };
-
-                // Get icon based on task type
+                // Get icon and color based on task type and due date
                 let icon = task.type_icon();
-                let title_with_icon = format!("{} {}", icon, task.name);
+                let icon_color = task.icon_color();
+                let icon_span = Span::styled(icon, Style::default().fg(icon_color));
+                let title_with_icon = vec![icon_span, Span::raw(" "), Span::raw(&task.name)];
+
+                // Make due dates dark gray
+                let due_style = Style::default().fg(Color::DarkGray);
 
                 Row::new(vec![
-                    Cell::from(title_with_icon),
+                    Cell::from(Line::from(title_with_icon)),
                     Cell::from(due_text).style(due_style),
                 ])
             })

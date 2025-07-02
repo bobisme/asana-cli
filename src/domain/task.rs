@@ -91,7 +91,24 @@ impl Task {
         if self.is_milestone() {
             "◇" // Milestone
         } else {
-            "●" // Task
+            "○" // Task (open circle)
+        }
+    }
+
+    /// Get the appropriate icon color based on due date
+    pub fn icon_color(&self) -> ratatui::style::Color {
+        use ratatui::style::Color;
+
+        if let Some(due_date) = self.due_date {
+            let now = chrono::Utc::now();
+            // Red if due before today (not including today)
+            if due_date.date_naive() < now.date_naive() && !self.completed {
+                Color::Red
+            } else {
+                Color::Green
+            }
+        } else {
+            Color::Green
         }
     }
 }
