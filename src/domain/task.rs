@@ -32,13 +32,46 @@ pub struct Task {
     pub due_date: Option<DateTime<Utc>>,
     pub assignee: Option<super::UserId>,
     pub assignee_name: Option<String>,
-    pub projects: Vec<super::ProjectId>,
+    pub projects: Vec<TaskProject>,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
     pub workspace: super::WorkspaceId,
     pub resource_type: Option<String>,
     pub resource_subtype: Option<String>,
+    pub custom_fields: Vec<CustomField>,
+    pub dependencies: Vec<TaskDependency>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CustomField {
+    pub gid: String,
+    pub name: String,
+    pub display_value: Option<String>,
+    pub text_value: Option<String>,
+    pub number_value: Option<f64>,
+    pub enum_value: Option<EnumValue>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EnumValue {
+    pub gid: String,
+    pub name: String,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskDependency {
+    pub gid: String,
+    pub resource_type: String,
+    pub name: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct TaskProject {
+    pub gid: String,
+    pub name: String,
+    pub color: Option<String>,
 }
 
 impl Task {

@@ -48,7 +48,7 @@ impl AsanaTaskRepository {
         // Add fields we want to retrieve
         params.push((
             "opt_fields".to_string(),
-            "gid,name,notes,html_notes,completed,due_on,due_at,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,tags.gid,tags.name,created_at,modified_at,workspace.gid,workspace.name,resource_type,resource_subtype".to_string(),
+            "gid,name,notes,html_notes,completed,due_on,due_at,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,projects.color,tags.gid,tags.name,created_at,modified_at,workspace.gid,workspace.name,resource_type,resource_subtype,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.text_value,custom_fields.number_value,custom_fields.enum_value.gid,custom_fields.enum_value.name,custom_fields.enum_value.color,dependencies.gid,dependencies.name,dependencies.resource_type".to_string(),
         ));
 
         params
@@ -74,7 +74,7 @@ impl AsanaTaskRepository {
 impl TaskRepository for AsanaTaskRepository {
     async fn get_task(&self, id: &TaskId) -> RepositoryResult<Task> {
         let path = format!(
-            "/tasks/{}?opt_fields=gid,name,notes,html_notes,completed,due_on,due_at,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,tags.gid,tags.name,created_at,modified_at,workspace.gid,workspace.name,resource_type,resource_subtype",
+            "/tasks/{}?opt_fields=gid,name,notes,html_notes,completed,due_on,due_at,assignee.gid,assignee.name,assignee.email,projects.gid,projects.name,projects.color,tags.gid,tags.name,created_at,modified_at,workspace.gid,workspace.name,resource_type,resource_subtype,custom_fields.gid,custom_fields.name,custom_fields.display_value,custom_fields.text_value,custom_fields.number_value,custom_fields.enum_value.gid,custom_fields.enum_value.name,custom_fields.enum_value.color,dependencies.gid,dependencies.name,dependencies.resource_type",
             id.0
         );
 

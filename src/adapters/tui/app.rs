@@ -189,6 +189,22 @@ impl App {
                 // Reset selection to first item if we have tasks
                 if !self.filtered_tasks.is_empty() {
                     self.task_list_state.select(Some(0));
+
+                    // Preload comments for visible tasks (first 10)
+                    let visible_tasks: Vec<TaskId> = self
+                        .filtered_tasks
+                        .iter()
+                        .take(10)
+                        .map(|t| t.id.clone())
+                        .collect();
+
+                    // Spawn background task to preload comments
+                    let state_manager = self.state_manager.clone();
+                    tokio::spawn(async move {
+                        for task_id in visible_tasks {
+                            let _ = state_manager.get_task_comments(&task_id).await;
+                        }
+                    });
                 } else {
                     self.task_list_state.select(None);
                 }
@@ -280,6 +296,28 @@ impl App {
             // Task info lines (status, due date, assignee)
             description_content_lines += 3; // Status, due date, blank line
             if task.assignee.is_some() {
+                description_content_lines += 1;
+            }
+
+            // Projects line
+            if !task.projects.is_empty() {
+                description_content_lines += 1;
+            }
+
+            // Custom fields
+            description_content_lines += task
+                .custom_fields
+                .iter()
+                .filter(|cf| {
+                    cf.display_value
+                        .as_ref()
+                        .map(|v| !v.is_empty())
+                        .unwrap_or(false)
+                })
+                .count() as u16;
+
+            // Dependencies line
+            if !task.dependencies.is_empty() {
                 description_content_lines += 1;
             }
 
@@ -1069,6 +1107,81 @@ impl App {
                         Span::styled("Assignee: ", Style::default().fg(Color::Cyan)),
                         Span::raw(assignee_display.to_string()),
                     ]),
+                    is_code_block: false,
+                });
+            }
+
+            // Add projects with colors
+            if !task.projects.is_empty() {
+                let mut project_spans =
+                    vec![Span::styled("Projects: ", Style::default().fg(Color::Cyan))];
+                for (i, project) in task.projects.iter().enumerate() {
+                    if i > 0 {
+                        project_spans.push(Span::raw(", "));
+                    }
+
+                    // Use project color if available
+                    let project_style = if let Some(color) = &project.color {
+                        Style::default().fg(asana_color_to_ratatui(color))
+                    } else {
+                        Style::default()
+                    };
+
+                    project_spans.push(Span::styled(project.name.clone(), project_style));
+                }
+                lines.push(md::MarkdownLine {
+                    line: Line::from(project_spans),
+                    is_code_block: false,
+                });
+            }
+
+            // Add custom fields
+            if !task.custom_fields.is_empty() {
+                for custom_field in &task.custom_fields {
+                    if let Some(display_value) = &custom_field.display_value {
+                        if !display_value.is_empty() {
+                            let mut field_spans = vec![Span::styled(
+                                format!("{}: ", custom_field.name),
+                                Style::default().fg(Color::Cyan),
+                            )];
+
+                            // Check if it's an enum value with color
+                            if let Some(enum_value) = &custom_field.enum_value {
+                                if let Some(color) = &enum_value.color {
+                                    let value_style =
+                                        Style::default().fg(asana_color_to_ratatui(color));
+                                    field_spans
+                                        .push(Span::styled(display_value.clone(), value_style));
+                                } else {
+                                    field_spans.push(Span::raw(display_value.clone()));
+                                }
+                            } else {
+                                field_spans.push(Span::raw(display_value.clone()));
+                            }
+
+                            lines.push(md::MarkdownLine {
+                                line: Line::from(field_spans),
+                                is_code_block: false,
+                            });
+                        }
+                    }
+                }
+            }
+
+            // Add dependencies
+            if !task.dependencies.is_empty() {
+                let mut dep_spans = vec![Span::styled(
+                    "Dependencies: ",
+                    Style::default().fg(Color::Cyan),
+                )];
+                for (i, dependency) in task.dependencies.iter().enumerate() {
+                    if i > 0 {
+                        dep_spans.push(Span::raw(", "));
+                    }
+                    dep_spans.push(Span::raw(dependency.name.clone()));
+                }
+                lines.push(md::MarkdownLine {
+                    line: Line::from(dep_spans),
                     is_code_block: false,
                 });
             }
@@ -2013,6 +2126,87 @@ impl App {
                 Constraint::Percentage((100 - percent_x) / 2),
             ])
             .split(popup_layout[1])[1]
+    }
+}
+
+/// Calculate luminance of a color for contrast calculation
+fn calculate_luminance(r: u8, g: u8, b: u8) -> f64 {
+    let r = r as f64 / 255.0;
+    let g = g as f64 / 255.0;
+    let b = b as f64 / 255.0;
+
+    let r = if r <= 0.03928 {
+        r / 12.92
+    } else {
+        ((r + 0.055) / 1.055).powf(2.4)
+    };
+    let g = if g <= 0.03928 {
+        g / 12.92
+    } else {
+        ((g + 0.055) / 1.055).powf(2.4)
+    };
+    let b = if b <= 0.03928 {
+        b / 12.92
+    } else {
+        ((b + 0.055) / 1.055).powf(2.4)
+    };
+
+    0.2126 * r + 0.7152 * g + 0.0722 * b
+}
+
+/// Parse hex color string to RGB values
+fn hex_to_rgb(hex: &str) -> Option<(u8, u8, u8)> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+
+    Some((r, g, b))
+}
+
+/// Determine if text should be light or dark based on background color
+fn should_use_light_text(bg_color: &str) -> bool {
+    if let Some((r, g, b)) = hex_to_rgb(bg_color) {
+        let luminance = calculate_luminance(r, g, b);
+        // Use light text if background is dark (luminance < 0.5)
+        luminance < 0.5
+    } else {
+        // Default to dark text if we can't parse the color
+        false
+    }
+}
+
+/// Convert Asana color to ratatui Color
+fn asana_color_to_ratatui(color: &str) -> Color {
+    match color {
+        "light-pink" => Color::LightRed,
+        "light-purple" => Color::LightMagenta,
+        "light-blue" => Color::LightBlue,
+        "light-green" => Color::LightGreen,
+        "light-yellow" => Color::LightYellow,
+        "light-orange" => Color::Rgb(255, 165, 0),
+        "light-gray" => Color::Gray,
+        "light-red" => Color::LightRed,
+        "dark-pink" => Color::Red,
+        "dark-purple" => Color::Magenta,
+        "dark-blue" => Color::Blue,
+        "dark-green" => Color::Green,
+        "dark-brown" => Color::Rgb(139, 69, 19),
+        "dark-red" => Color::Red,
+        "dark-gray" => Color::DarkGray,
+        "dark-orange" => Color::Rgb(255, 140, 0),
+        _ => {
+            // Try to parse as hex color
+            if let Some((r, g, b)) = hex_to_rgb(color) {
+                Color::Rgb(r, g, b)
+            } else {
+                Color::Gray // Default color
+            }
+        }
     }
 }
 

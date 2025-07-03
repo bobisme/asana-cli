@@ -34,6 +34,32 @@ pub struct TaskDto {
     pub workspace: Option<WorkspaceDto>,
     pub resource_type: Option<String>,
     pub resource_subtype: Option<String>,
+    pub custom_fields: Option<Vec<CustomFieldDto>>,
+    pub dependencies: Option<Vec<TaskCompactDto>>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CustomFieldDto {
+    pub gid: String,
+    pub name: Option<String>,
+    pub display_value: Option<String>,
+    pub text_value: Option<String>,
+    pub number_value: Option<f64>,
+    pub enum_value: Option<EnumValueDto>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct EnumValueDto {
+    pub gid: String,
+    pub name: Option<String>,
+    pub color: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TaskCompactDto {
+    pub gid: String,
+    pub resource_type: Option<String>,
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -130,7 +156,7 @@ impl From<TaskDto> for Task {
             due_date,
             assignee: dto.assignee.as_ref().map(|u| UserId(u.gid.clone())),
             assignee_name: dto.assignee.map(|u| u.name),
-            projects: dto.projects.into_iter().map(|p| ProjectId(p.gid)).collect(),
+            projects: dto.projects.into_iter().map(|p| p.into()).collect(),
             tags: dto.tags.into_iter().map(|t| t.name).collect(),
             created_at: DateTime::parse_from_rfc3339(&dto.created_at)
                 .map(|dt| dt.with_timezone(&Utc))
@@ -145,6 +171,61 @@ impl From<TaskDto> for Task {
             ),
             resource_type: dto.resource_type,
             resource_subtype: dto.resource_subtype,
+            custom_fields: dto
+                .custom_fields
+                .unwrap_or_default()
+                .into_iter()
+                .map(|cf| cf.into())
+                .collect(),
+            dependencies: dto
+                .dependencies
+                .unwrap_or_default()
+                .into_iter()
+                .map(|d| d.into())
+                .collect(),
+        }
+    }
+}
+
+impl From<CustomFieldDto> for crate::domain::task::CustomField {
+    fn from(dto: CustomFieldDto) -> Self {
+        Self {
+            gid: dto.gid,
+            name: dto.name.unwrap_or_default(),
+            display_value: dto.display_value,
+            text_value: dto.text_value,
+            number_value: dto.number_value,
+            enum_value: dto.enum_value.map(|ev| ev.into()),
+        }
+    }
+}
+
+impl From<EnumValueDto> for crate::domain::task::EnumValue {
+    fn from(dto: EnumValueDto) -> Self {
+        Self {
+            gid: dto.gid,
+            name: dto.name.unwrap_or_else(|| "Unknown".to_string()),
+            color: dto.color,
+        }
+    }
+}
+
+impl From<TaskCompactDto> for crate::domain::task::TaskDependency {
+    fn from(dto: TaskCompactDto) -> Self {
+        Self {
+            gid: dto.gid,
+            resource_type: dto.resource_type.unwrap_or_else(|| "task".to_string()),
+            name: dto.name.unwrap_or_else(|| "Unnamed".to_string()),
+        }
+    }
+}
+
+impl From<ProjectDto> for crate::domain::task::TaskProject {
+    fn from(dto: ProjectDto) -> Self {
+        Self {
+            gid: dto.gid,
+            name: dto.name,
+            color: dto.color,
         }
     }
 }
