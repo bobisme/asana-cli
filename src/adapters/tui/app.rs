@@ -1111,23 +1111,23 @@ impl App {
                 });
             }
 
-            // Add projects with colors
+            // Add projects with colored labels
             if !task.projects.is_empty() {
                 let mut project_spans =
                     vec![Span::styled("Projects: ", Style::default().fg(Color::Cyan))];
                 for (i, project) in task.projects.iter().enumerate() {
                     if i > 0 {
-                        project_spans.push(Span::raw(", "));
+                        project_spans.push(Span::raw(" "));
                     }
 
-                    // Use project color if available
-                    let project_style = if let Some(color) = &project.color {
-                        Style::default().fg(asana_color_to_ratatui(color))
+                    // Create colored label with proper contrast
+                    let bg_color = if let Some(color) = &project.color {
+                        asana_color_to_ratatui(color)
                     } else {
-                        Style::default()
+                        Color::Gray
                     };
 
-                    project_spans.push(Span::styled(project.name.clone(), project_style));
+                    project_spans.extend(create_colored_label(&project.name, bg_color));
                 }
                 lines.push(md::MarkdownLine {
                     line: Line::from(project_spans),
@@ -1872,7 +1872,7 @@ impl App {
                     lines.push(Line::from(vec![
                         Span::styled(author_name, Style::default().fg(Color::Blue)),
                         Span::styled(
-                            format!(" • {}", time_display),
+                            format!(" • {time_display}"),
                             Style::default().fg(Color::Gray),
                         ),
                     ]));
@@ -2180,34 +2180,86 @@ fn should_use_light_text(bg_color: &str) -> bool {
     }
 }
 
-/// Convert Asana color to ratatui Color
+/// Convert Asana color to ratatui Color with explicit RGB values
+/// This ensures consistent colors regardless of terminal theme
 fn asana_color_to_ratatui(color: &str) -> Color {
     match color {
-        "light-pink" => Color::LightRed,
-        "light-purple" => Color::LightMagenta,
-        "light-blue" => Color::LightBlue,
-        "light-green" => Color::LightGreen,
-        "light-yellow" => Color::LightYellow,
-        "light-orange" => Color::Rgb(255, 165, 0),
-        "light-gray" => Color::Gray,
-        "light-red" => Color::LightRed,
-        "dark-pink" => Color::Red,
-        "dark-purple" => Color::Magenta,
-        "dark-blue" => Color::Blue,
-        "dark-green" => Color::Green,
+        "light-pink" => Color::Rgb(255, 182, 193),
+        "light-purple" => Color::Rgb(221, 160, 221),
+        "light-blue" => Color::Rgb(173, 216, 230),
+        "light-green" => Color::Rgb(144, 238, 144),
+        "light-yellow" => Color::Rgb(255, 255, 224),
+        "light-orange" => Color::Rgb(255, 218, 185),
+        "light-gray" => Color::Rgb(211, 211, 211),
+        "light-red" => Color::Rgb(255, 182, 193),
+        "dark-pink" => Color::Rgb(199, 21, 133),
+        "dark-purple" => Color::Rgb(148, 0, 211),
+        "dark-blue" => Color::Rgb(0, 0, 139),
+        "dark-green" => Color::Rgb(0, 100, 0),
         "dark-brown" => Color::Rgb(139, 69, 19),
-        "dark-red" => Color::Red,
-        "dark-gray" => Color::DarkGray,
+        "dark-red" => Color::Rgb(139, 0, 0),
+        "dark-gray" => Color::Rgb(105, 105, 105),
         "dark-orange" => Color::Rgb(255, 140, 0),
         _ => {
             // Try to parse as hex color
             if let Some((r, g, b)) = hex_to_rgb(color) {
                 Color::Rgb(r, g, b)
             } else {
-                Color::Gray // Default color
+                Color::Rgb(128, 128, 128) // Default gray
             }
         }
     }
+}
+
+/// Extract RGB values from a ratatui Color
+fn color_to_rgb(color: Color) -> (u8, u8, u8) {
+    match color {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Red => (255, 0, 0),
+        Color::Green => (0, 255, 0),
+        Color::Blue => (0, 0, 255),
+        Color::Yellow => (255, 255, 0),
+        Color::Magenta => (255, 0, 255),
+        Color::Cyan => (0, 255, 255),
+        Color::White => (255, 255, 255),
+        Color::Black => (0, 0, 0),
+        Color::Gray => (128, 128, 128),
+        Color::DarkGray => (64, 64, 64),
+        Color::LightRed => (255, 128, 128),
+        Color::LightGreen => (128, 255, 128),
+        Color::LightBlue => (128, 128, 255),
+        Color::LightYellow => (255, 255, 128),
+        Color::LightMagenta => (255, 128, 255),
+        Color::LightCyan => (128, 255, 255),
+        _ => (128, 128, 128), // Default to gray for other colors
+    }
+}
+
+/// Create a colored label with proper contrast text and nerd font icons
+/// Returns a vector of spans that can be used in ratatui Line
+fn create_colored_label(text: &str, bg_color: Color) -> Vec<Span<'static>> {
+    let (r, g, b) = color_to_rgb(bg_color);
+    let luminance = calculate_luminance(r, g, b);
+
+    // Use explicit RGB values for text colors to avoid terminal color scheme issues
+    let text_color = if luminance > 0.5 {
+        Color::Rgb(0, 0, 0)      // Pure black for light backgrounds
+    } else {
+        Color::Rgb(255, 255, 255) // Pure white for dark backgrounds
+    };
+
+    // Nerd font powerline icons
+    let left_icon = "\u{e0b6}"; //
+    let right_icon = "\u{e0b4}"; //
+
+    vec![
+        Span::styled(left_icon.to_string(), Style::default().fg(bg_color)),
+        Span::styled(
+            text.to_string(),
+            Style::default().bg(bg_color).fg(text_color),
+        ),
+        Span::styled(right_icon.to_string(), Style::default().fg(bg_color)),
+    ]
 }
 
 pub async fn run_tui(mut app: App) -> Result<()> {
