@@ -3,7 +3,7 @@ use color_eyre::Result;
 use std::sync::Arc;
 
 mod adapters;
-mod application;
+mod app;
 mod domain;
 mod ports;
 
@@ -11,9 +11,9 @@ use adapters::{
     api::{AsanaClient, AsanaTaskRepository},
     cache::MokaCacheAdapter,
     config::FileConfigStore,
-    tui::{run_tui, App},
+    tui::run_tui,
 };
-use application::{AppError, StateManager, TaskService};
+use app::error::AppError;
 use ports::ConfigStore;
 
 #[tokio::main]
@@ -134,118 +134,118 @@ async fn main() -> Result<()> {
 
     // Create dependencies
     let api_client = AsanaClient::new(api_token);
-    let task_repo = Arc::new(AsanaTaskRepository::new(api_client));
+    // let task_repo = Arc::new(AsanaTaskRepository::new(api_client));
 
     // Create caches
-    let task_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
-    let comment_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
+    // let task_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
+    // let comment_cache = Arc::new(MokaCacheAdapter::new(config.cache_ttl_seconds, 1000));
 
     // Create application services
-    let task_service = Arc::new(TaskService::new(
-        task_repo.clone(),
-        task_cache,
-        comment_cache,
-    ));
-
-    let state_manager = Arc::new(StateManager::new(
-        task_service,
-        task_repo.clone(),
-        config_store,
-    ));
+    // let task_service = Arc::new(TaskService::new(
+    //     task_repo.clone(),
+    //     task_cache,
+    //     comment_cache,
+    // ));
+    //
+    // let state_manager = Arc::new(StateManager::new(
+    //     task_service,
+    //     task_repo.clone(),
+    //     config_store,
+    // ));
 
     // Handle subcommands
     match matches.subcommand() {
-        Some(("tasks", tasks_matches)) => {
-            match tasks_matches.subcommand() {
-                Some(("list", _)) => {
-                    // Initialize state manager
-                    state_manager.initialize().await?;
-
-                    // Get tasks
-                    match state_manager.get_tasks_for_current_workspace(false).await {
-                        Ok(tasks) => {
-                            let json = serde_json::to_string_pretty(&tasks)?;
-                            println!("{json}");
-                        }
-                        Err(e) => {
-                            eprintln!("❌ Failed to list tasks: {e}");
-                            std::process::exit(1);
-                        }
-                    }
-                }
-                Some(("get", get_matches)) => {
-                    if let Some(task_id) = get_matches.get_one::<String>("task_id") {
-                        // Initialize state manager
-                        state_manager.initialize().await?;
-
-                        // Get the specific task
-                        match state_manager.get_task(&task_id.as_str().into()).await {
-                            Ok(task) => {
-                                let json = serde_json::to_string_pretty(&task)?;
-                                println!("{json}");
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Failed to get task: {e}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                Some(("stories", stories_matches)) => {
-                    if let Some(task_id) = stories_matches.get_one::<String>("task_id") {
-                        // Get stories for task
-                        match state_manager
-                            .get_task_comments(&task_id.as_str().into())
-                            .await
-                        {
-                            Ok(comments) => {
-                                let json = serde_json::to_string_pretty(&comments)?;
-                                println!("{json}");
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Failed to list stories: {e}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    eprintln!("❌ Unknown tasks subcommand");
-                    std::process::exit(1);
-                }
-            }
-        }
-        Some(("stories", stories_matches)) => {
-            match stories_matches.subcommand() {
-                Some(("list", list_matches)) => {
-                    if let Some(task_id) = list_matches.get_one::<String>("task") {
-                        // Get stories for task
-                        match state_manager
-                            .get_task_comments(&task_id.as_str().into())
-                            .await
-                        {
-                            Ok(comments) => {
-                                let json = serde_json::to_string_pretty(&comments)?;
-                                println!("{json}");
-                            }
-                            Err(e) => {
-                                eprintln!("❌ Failed to list stories: {e}");
-                                std::process::exit(1);
-                            }
-                        }
-                    }
-                }
-                _ => {
-                    eprintln!("❌ Unknown stories subcommand");
-                    std::process::exit(1);
-                }
-            }
-        }
+        // Some(("tasks", tasks_matches)) => {
+        //     match tasks_matches.subcommand() {
+        //         Some(("list", _)) => {
+        //             // Initialize state manager
+        //             state_manager.initialize().await?;
+        //
+        //             // Get tasks
+        //             match state_manager.get_tasks_for_current_workspace(false).await {
+        //                 Ok(tasks) => {
+        //                     let json = serde_json::to_string_pretty(&tasks)?;
+        //                     println!("{json}");
+        //                 }
+        //                 Err(e) => {
+        //                     eprintln!("❌ Failed to list tasks: {e}");
+        //                     std::process::exit(1);
+        //                 }
+        //             }
+        //         }
+        //         Some(("get", get_matches)) => {
+        //             if let Some(task_id) = get_matches.get_one::<String>("task_id") {
+        //                 // Initialize state manager
+        //                 state_manager.initialize().await?;
+        //
+        //                 // Get the specific task
+        //                 match state_manager.get_task(&task_id.as_str().into()).await {
+        //                     Ok(task) => {
+        //                         let json = serde_json::to_string_pretty(&task)?;
+        //                         println!("{json}");
+        //                     }
+        //                     Err(e) => {
+        //                         eprintln!("❌ Failed to get task: {e}");
+        //                         std::process::exit(1);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         Some(("stories", stories_matches)) => {
+        //             if let Some(task_id) = stories_matches.get_one::<String>("task_id") {
+        //                 // Get stories for task
+        //                 match state_manager
+        //                     .get_task_comments(&task_id.as_str().into())
+        //                     .await
+        //                 {
+        //                     Ok(comments) => {
+        //                         let json = serde_json::to_string_pretty(&comments)?;
+        //                         println!("{json}");
+        //                     }
+        //                     Err(e) => {
+        //                         eprintln!("❌ Failed to list stories: {e}");
+        //                         std::process::exit(1);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         _ => {
+        //             eprintln!("❌ Unknown tasks subcommand");
+        //             std::process::exit(1);
+        //         }
+        //     }
+        // }
+        // Some(("stories", stories_matches)) => {
+        //     match stories_matches.subcommand() {
+        //         Some(("list", list_matches)) => {
+        //             if let Some(task_id) = list_matches.get_one::<String>("task") {
+        //                 // Get stories for task
+        //                 match state_manager
+        //                     .get_task_comments(&task_id.as_str().into())
+        //                     .await
+        //                 {
+        //                     Ok(comments) => {
+        //                         let json = serde_json::to_string_pretty(&comments)?;
+        //                         println!("{json}");
+        //                     }
+        //                     Err(e) => {
+        //                         eprintln!("❌ Failed to list stories: {e}");
+        //                         std::process::exit(1);
+        //                     }
+        //                 }
+        //             }
+        //         }
+        //         _ => {
+        //             eprintln!("❌ Unknown stories subcommand");
+        //             std::process::exit(1);
+        //         }
+        //     }
+        // }
         None => {
             // Default behavior - run TUI
-            let app = App::new(state_manager);
+            // let app = App::new(state_manager);
 
-            if let Err(e) = run_tui(app).await {
+            if let Err(e) = run_tui(api_client).await {
                 match &e.downcast_ref::<AppError>() {
                     Some(AppError::Application(msg)) => {
                         eprintln!("❌ {msg}");

@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::domain::{task::model::TaskId, user::User};
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommentId(pub String);
 
@@ -27,9 +29,9 @@ impl From<&str> for CommentId {
 pub struct Comment {
     pub id: CommentId,
     pub text: Option<String>,
-    pub author: Option<super::User>,
+    pub author: Option<User>,
     pub created_at: DateTime<Utc>,
-    pub task_id: super::TaskId,
+    pub task_id: TaskId,
     pub story_type: Option<String>,
     pub resource_subtype: Option<String>,
 }

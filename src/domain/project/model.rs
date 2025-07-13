@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::domain::workspace::WorkspaceId;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ProjectId(pub String);
 
@@ -30,7 +32,7 @@ pub struct Project {
     pub description: Option<String>,
     pub color: Option<String>,
     pub archived: bool,
-    pub workspace: super::WorkspaceId,
+    pub workspace: WorkspaceId,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
 }

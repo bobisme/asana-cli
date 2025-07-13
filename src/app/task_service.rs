@@ -1,17 +1,23 @@
-use super::AppResult;
-use crate::domain::*;
-use crate::ports::{Cache, TaskRepository};
+use crate::{
+    app::error::AppResult,
+    domain::{
+        comment::Comment,
+        task::{repo::TaskRepository, Task, TaskFilter, TaskId, TaskUpdate},
+    },
+    ports::Cache,
+};
 use std::sync::Arc;
 
-pub struct TaskService {
-    repository: Arc<dyn TaskRepository>,
+pub struct TaskService<TaskRepo> {
+    // repository: Arc<dyn TaskRepository>,
+    repository: TaskRepo,
     cache: Arc<dyn Cache<TaskId, Task>>,
     comment_cache: Arc<dyn Cache<TaskId, Vec<Comment>>>,
 }
 
-impl TaskService {
+impl<TaskRepo: TaskRepository> TaskService<TaskRepo> {
     pub fn new(
-        repository: Arc<dyn TaskRepository>,
+        repository: TaskRepo,
         cache: Arc<dyn Cache<TaskId, Task>>,
         comment_cache: Arc<dyn Cache<TaskId, Vec<Comment>>>,
     ) -> Self {

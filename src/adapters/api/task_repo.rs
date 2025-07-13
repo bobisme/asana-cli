@@ -1,10 +1,21 @@
 use super::{
     AsanaClient, CommentCreateDto, CommentDto, TaskDto, TaskUpdateDto, UserDto, WorkspaceDto,
 };
-use crate::domain::*;
-use crate::ports::{RepositoryResult, TaskRepository, WorkspaceRepository};
-use async_trait::async_trait;
+use crate::{
+    app::error::RepositoryResult,
+    domain::{
+        comment::Comment,
+        task::{
+            model::{Task, TaskFilter, TaskId},
+            repo::TaskRepository,
+            TaskUpdate,
+        },
+        user::User,
+        workspace::{repo::WorkspaceRepository, Workspace},
+    },
+};
 
+#[derive(Clone)]
 pub struct AsanaTaskRepository {
     client: AsanaClient,
 }
@@ -70,7 +81,6 @@ impl AsanaTaskRepository {
     }
 }
 
-#[async_trait]
 impl TaskRepository for AsanaTaskRepository {
     async fn get_task(&self, id: &TaskId) -> RepositoryResult<Task> {
         let path = format!(
@@ -129,7 +139,6 @@ impl TaskRepository for AsanaTaskRepository {
     }
 }
 
-#[async_trait]
 impl WorkspaceRepository for AsanaTaskRepository {
     async fn list_workspaces(&self) -> RepositoryResult<Vec<Workspace>> {
         let path = "/workspaces?opt_fields=gid,name,is_organization";

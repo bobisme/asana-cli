@@ -1,6 +1,13 @@
-use crate::domain::*;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+use crate::domain::{
+    comment::model::{Comment, CommentId},
+    project::{Project, ProjectId},
+    task::{Task, TaskId, TaskUpdate},
+    user::{User, UserId},
+    workspace::{Workspace, WorkspaceId},
+};
 
 // Asana API response wrapper
 #[derive(Debug, Deserialize)]
@@ -187,7 +194,7 @@ impl From<TaskDto> for Task {
     }
 }
 
-impl From<CustomFieldDto> for crate::domain::task::CustomField {
+impl From<CustomFieldDto> for crate::domain::task::model::CustomField {
     fn from(dto: CustomFieldDto) -> Self {
         Self {
             gid: dto.gid,
@@ -200,7 +207,7 @@ impl From<CustomFieldDto> for crate::domain::task::CustomField {
     }
 }
 
-impl From<EnumValueDto> for crate::domain::task::EnumValue {
+impl From<EnumValueDto> for crate::domain::task::model::EnumValue {
     fn from(dto: EnumValueDto) -> Self {
         Self {
             gid: dto.gid,
@@ -210,7 +217,7 @@ impl From<EnumValueDto> for crate::domain::task::EnumValue {
     }
 }
 
-impl From<TaskCompactDto> for crate::domain::task::TaskDependency {
+impl From<TaskCompactDto> for crate::domain::task::model::TaskDependency {
     fn from(dto: TaskCompactDto) -> Self {
         Self {
             gid: dto.gid,
@@ -220,7 +227,7 @@ impl From<TaskCompactDto> for crate::domain::task::TaskDependency {
     }
 }
 
-impl From<ProjectDto> for crate::domain::task::TaskProject {
+impl From<ProjectDto> for crate::domain::task::model::TaskProject {
     fn from(dto: ProjectDto) -> Self {
         Self {
             gid: dto.gid,

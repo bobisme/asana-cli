@@ -1,11 +1,13 @@
+use crate::app::error::{RepositoryError, RepositoryResult};
+
 use super::dto::{AsanaListResponse, AsanaResponse};
-use crate::ports::{RepositoryError, RepositoryResult};
 use reqwest::{Client, Response};
 use serde::de::DeserializeOwned;
 use std::time::Duration;
 
 const ASANA_API_BASE: &str = "https://app.asana.com/api/1.0";
 
+#[derive(Clone)]
 pub struct AsanaClient {
     client: Client,
     api_token: String,

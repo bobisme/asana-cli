@@ -1,6 +1,14 @@
-use super::{AppError, AppResult, TaskService};
-use crate::domain::*;
-use crate::ports::{ConfigStore, WorkspaceRepository};
+use super::error::AppError;
+use crate::{
+    app::{error::AppResult, task_service::TaskService},
+    domain::{
+        comment::Comment,
+        task::{repo::TaskRepository, Task, TaskFilter, TaskId},
+        user::User,
+        workspace::{repo::WorkspaceRepository, WorkspaceId},
+    },
+    ports::ConfigStore,
+};
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use std::sync::Arc;
@@ -11,8 +19,8 @@ pub struct CachedList<T> {
     pub fetched_at: DateTime<Utc>,
 }
 
-pub struct StateManager {
-    task_service: Arc<TaskService>,
+pub struct StateManager<T> {
+    task_service: Arc<TaskService<T>>,
     workspace_repo: Arc<dyn WorkspaceRepository>,
     config_store: Arc<dyn ConfigStore>,
 
@@ -24,9 +32,9 @@ pub struct StateManager {
     current_user: tokio::sync::RwLock<Option<User>>,
 }
 
-impl StateManager {
+impl<T: TaskRepository> StateManager<T> {
     pub fn new(
-        task_service: Arc<TaskService>,
+        task_service: T,
         workspace_repo: Arc<dyn WorkspaceRepository>,
         config_store: Arc<dyn ConfigStore>,
     ) -> Self {
@@ -78,7 +86,7 @@ impl StateManager {
                             tracing::warn!("Failed to save workspace config: {}", e);
                         }
                     } else if workspaces.is_empty() {
-                        return Err(crate::application::AppError::Application(
+                        return Err(crate::app::error::AppError::Application(
                             "No workspaces found for this account".to_string(),
                         ));
                     } else {
@@ -90,7 +98,7 @@ impl StateManager {
                         for workspace in &workspaces {
                             tracing::info!("  - {} ({})", workspace.name, workspace.id);
                         }
-                        return Err(crate::application::AppError::Application(
+                        return Err(crate::app::error::AppError::Application(
                             format!("Multiple workspaces found ({}). Please specify one with --workspace <ID>", workspaces.len())
                         ));
                     }

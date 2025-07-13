@@ -2,6 +2,8 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
+use crate::domain::{project::ProjectId, user::UserId, workspace::WorkspaceId};
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TaskId(pub String);
 
@@ -30,13 +32,13 @@ pub struct Task {
     pub description: Option<String>,
     pub completed: bool,
     pub due_date: Option<DateTime<Utc>>,
-    pub assignee: Option<super::UserId>,
+    pub assignee: Option<UserId>,
     pub assignee_name: Option<String>,
     pub projects: Vec<TaskProject>,
     pub tags: Vec<String>,
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
-    pub workspace: super::WorkspaceId,
+    pub workspace: WorkspaceId,
     pub resource_type: Option<String>,
     pub resource_subtype: Option<String>,
     pub custom_fields: Vec<CustomField>,
@@ -152,14 +154,14 @@ pub struct TaskUpdate {
     pub description: Option<String>,
     pub completed: Option<bool>,
     pub due_date: Option<Option<DateTime<Utc>>>,
-    pub assignee: Option<Option<super::UserId>>,
+    pub assignee: Option<Option<UserId>>,
 }
 
 #[derive(Debug, Clone)]
 pub struct TaskFilter {
-    pub workspace: Option<super::WorkspaceId>,
-    pub project: Option<super::ProjectId>,
-    pub assignee: Option<super::UserId>,
+    pub workspace: Option<WorkspaceId>,
+    pub project: Option<ProjectId>,
+    pub assignee: Option<UserId>,
     pub completed: Option<bool>,
     pub search_query: Option<String>,
     pub limit: Option<usize>,

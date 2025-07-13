@@ -1,8 +1,8 @@
-use crate::domain::WorkspaceId;
-use async_trait::async_trait;
 use thiserror::Error;
 
-#[derive(Error, Debug)]
+use crate::domain::workspace::WorkspaceId;
+
+#[derive(Error, Debug, Clone)]
 pub enum ConfigError {
     #[error("Failed to read configuration: {0}")]
     ReadError(String),
@@ -35,7 +35,6 @@ impl Default for AppConfig {
     }
 }
 
-#[async_trait]
 pub trait ConfigStore: Send + Sync {
     async fn load_config(&self) -> ConfigResult<AppConfig>;
     async fn save_config(&self, config: &AppConfig) -> ConfigResult<()>;

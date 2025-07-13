@@ -1,5 +1,7 @@
-use crate::domain::WorkspaceId;
-use crate::ports::{AppConfig, ConfigError, ConfigResult, ConfigStore};
+use crate::{
+    domain::workspace::WorkspaceId,
+    ports::{AppConfig, ConfigError, ConfigResult, ConfigStore},
+};
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -78,7 +80,6 @@ impl FileConfigStore {
     }
 }
 
-#[async_trait]
 impl ConfigStore for FileConfigStore {
     async fn load_config(&self) -> ConfigResult<AppConfig> {
         let content = match fs::read_to_string(&self.config_path).await {
