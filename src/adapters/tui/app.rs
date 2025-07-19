@@ -5,7 +5,7 @@ use std::time::Duration;
 use color_eyre::Result;
 use ratatui::crossterm;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{Paragraph, TableState};
 use ratatui::{
     crossterm::{
         event::KeyEvent,
@@ -16,25 +16,26 @@ use ratatui::{
 use tokio::sync::mpsc;
 
 use crate::adapters::api::{AsanaClient, AsanaTaskRepository};
+use crate::adapters::tui::views;
 use crate::app::error::{AppError, RepositoryError};
 use crate::domain::comment::Comment;
 use crate::domain::task::repo::TaskRepository;
 use crate::domain::task::{Task, TaskFilter, TaskId};
 
 #[derive(Debug, Clone, Copy)]
-enum View {
+pub enum View {
     TaskList,
 }
 
-#[derive(Debug, Clone, Copy)]
-enum Pane {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pane {
     TaskList,
-    Task,
+    Description,
     Comments,
 }
 
 #[derive(Debug, Clone)]
-enum Event {
+pub enum Event {
     Init,
     Key(KeyEvent),
     ReceivedTasks(Vec<Task>),
@@ -46,14 +47,27 @@ enum Event {
     Quit,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct TaskListState {
+    pub is_loading: bool,
+    pub selected_row_index: Option<usize>,
+    pub filtered_task_ids: Vec<TaskId>,
+    pub error: Option<AppError>,
+}
+
 #[derive(Debug, Clone)]
-struct State {
-    is_running: bool,
-    view: View,
-    focus: Pane,
-    tasks: HashMap<TaskId, Task>,
-    comments: HashMap<String, Comment>,
-    last_error: Option<AppError>,
+pub struct State {
+    pub is_running: bool,
+    pub view: View,
+    pub focus: Pane,
+    pub tasks: HashMap<TaskId, Task>,
+    pub comments: HashMap<String, Comment>,
+    pub last_error: Option<AppError>,
+
+    pub focused_pane: Pane,
+    pub fullscreen_pane: Option<Pane>,
+    pub search_query: String,
+    pub task_list_state: TaskListState,
 }
 
 impl Default for State {
@@ -64,23 +78,29 @@ impl Default for State {
             focus: Pane::TaskList,
             tasks: Default::default(),
             comments: Default::default(),
+            focused_pane: Pane::TaskList,
             last_error: None,
+            search_query: Default::default(),
+            task_list_state: Default::default(),
+            fullscreen_pane: None,
         }
     }
 }
 
+impl State {
+    pub fn selected_task_id(&self) -> Option<&TaskId> {
+        let row_index = self.task_list_state.selected_row_index?;
+        self.task_list_state.filtered_task_ids.get(row_index)
+    }
+
+    pub fn selected_task(&self) -> Option<&Task> {
+        let task_id = self.selected_task_id()?;
+        self.tasks.get(task_id)
+    }
+}
+
 fn view(state: &State, frame: &mut Frame) {
-    let len = state.tasks.len();
-    if state.last_error.is_some() {
-        let err = state.last_error.clone().unwrap();
-        frame.render_widget(Paragraph::new(format!("ERROR: {err}")), frame.area());
-        return;
-    }
-    if len > 0 {
-        frame.render_widget(Paragraph::new(format!("loaded {len}")), frame.area());
-        return;
-    }
-    frame.render_widget(Paragraph::new("loading..."), frame.area());
+    views::tasks::render(state, frame);
 }
 
 fn handle_task_list_key(_state: &State, key: KeyEvent) -> (Option<State>, Option<Event>) {
@@ -135,7 +155,8 @@ impl<TaskRepo: TaskRepository> App<TaskRepo> {
             }
             Event::RequestError(err) => {
                 let mut state = state.clone();
-                state.last_error = Some(AppError::Repository(err));
+                state.last_error = Some(AppError::Repository(err.clone()));
+                state.task_list_state.error = Some(AppError::Repository(err));
                 (Some(state), None)
             }
             Event::Key(key) => match (state.view, state.focus) {
