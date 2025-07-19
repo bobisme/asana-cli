@@ -1,23 +1,43 @@
-use ratatui::widgets::Paragraph;
+use ratatui::widgets::{BorderType, Borders, Paragraph};
+use ratatui::{prelude::*, widgets::Block};
 
-use crate::adapters::tui::components::Component;
+use crate::adapters::tui::{components::Component, Pane, State};
 
-const NO_DESCRIPTION: &str = "No description available";
+// const NO_COMMENTS: &str = "No comments available";
+
+fn get_border_style(is_focused: bool) -> Style {
+    if is_focused {
+        Style::default().fg(Color::Green)
+    } else {
+        Style::default().fg(Color::Gray)
+    }
+}
 
 pub struct CommentsPane;
 
 impl Component for CommentsPane {
-    type State = crate::adapters::tui::State;
+    type State = State;
 
     fn render(state: &Self::State, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-        if let Some(task) = state.selected_task() {
-            let description = task
-                .description
-                .clone()
-                .or_else(|| Some(NO_DESCRIPTION.to_owned()))
-                .unwrap();
-            frame.render_widget(Paragraph::new(description), area);
-        }
+        let is_focused = state.focus == Pane::Comments;
+        let border_style = get_border_style(is_focused);
+        let title = "Activity";
+        let block = Block::default()
+            .title(title)
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(border_style);
+        let paragraph = Paragraph::new("Comments and stuff...").block(block); //.style(text_style)
+
+        frame.render_widget(paragraph, area);
+        // if let Some(task) = state.selected_task() {
+        //     // let description = task
+        //     //     .description
+        //     //     .clone()
+        //     //     .or_else(|| Some(NO_DESCRIPTION.to_owned()))
+        //     //     .unwrap();
+        //     frame.render_widget(Paragraph::new("Comments..."), area);
+        // }
     }
 }
 

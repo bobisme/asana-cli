@@ -1,7 +1,10 @@
 use ratatui::{prelude::*, Frame};
 
 use crate::adapters::tui::{
-    components::{task_list_pane::TaskListPane, Component},
+    components::{
+        comments_pane::CommentsPane, description_pane::DescriptionPane, search_bar::SearchBar,
+        task_list_pane::TaskListPane, Component,
+    },
     Pane, State,
 };
 
@@ -36,7 +39,7 @@ pub fn render(state: &State, frame: &mut Frame) {
         ])
         .split(frame.area());
 
-    // SearchBar::render(state, frame, main_chunks[0]);
+    SearchBar::render(state, frame, main_chunks[0]);
 
     // Split main content area: task list (left) | right side
     let content_chunks = Layout::default()
@@ -50,15 +53,16 @@ pub fn render(state: &State, frame: &mut Frame) {
     TaskListPane::render(state, frame, content_chunks[0]);
 
     // Split right side vertically: description (top) | comments (bottom)
-    // let right_chunks = Layout::default()
-    //     .direction(Direction::Vertical)
-    //     .constraints([
-    //         Constraint::Percentage(50), // Description pane
-    //         Constraint::Percentage(50), // Comments pane
-    //     ])
-    //     .split(content_chunks[1]);
+    let right_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(60), // Description pane
+            Constraint::Percentage(40), // Comments pane
+        ])
+        .split(content_chunks[1]);
 
-    // Render description pane (right top)
+    DescriptionPane::render(state, frame, right_chunks[0]);
+    CommentsPane::render(state, frame, right_chunks[1]);
     // self.render_description_pane_standalone(frame, right_chunks[0]);
 
     // Render comments pane (right bottom)

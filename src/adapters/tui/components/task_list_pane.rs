@@ -67,7 +67,7 @@ impl Component for TaskListPane {
         }
 
         if state.task_list_state.filtered_task_ids.is_empty() {
-            let message = if state.search_query.is_empty() {
+            let message = if state.search.query.is_empty() {
                 "No tasks found"
             } else {
                 "No tasks match your search"

@@ -5,7 +5,6 @@ use std::time::Duration;
 use color_eyre::Result;
 use ratatui::crossterm;
 use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::widgets::{Paragraph, TableState};
 use ratatui::{
     crossterm::{
         event::KeyEvent,
@@ -29,9 +28,10 @@ pub enum View {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
-    TaskList,
-    Description,
     Comments,
+    Description,
+    SearchBar,
+    TaskList,
 }
 
 #[derive(Debug, Clone)]
@@ -55,6 +55,12 @@ pub struct TaskListState {
     pub error: Option<AppError>,
 }
 
+#[derive(Debug, Default, Clone)]
+pub struct SearchState {
+    pub query: String,
+    pub cursor_pos: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct State {
     pub is_running: bool,
@@ -66,8 +72,8 @@ pub struct State {
 
     pub focused_pane: Pane,
     pub fullscreen_pane: Option<Pane>,
-    pub search_query: String,
     pub task_list_state: TaskListState,
+    pub search: SearchState,
 }
 
 impl Default for State {
@@ -80,8 +86,8 @@ impl Default for State {
             comments: Default::default(),
             focused_pane: Pane::TaskList,
             last_error: None,
-            search_query: Default::default(),
             task_list_state: Default::default(),
+            search: Default::default(),
             fullscreen_pane: None,
         }
     }
