@@ -1,6 +1,5 @@
 pub mod app;
 pub mod components;
-pub mod event;
 pub mod md;
 pub mod search;
 pub mod theme;

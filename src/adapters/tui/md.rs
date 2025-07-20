@@ -6,7 +6,7 @@ use ratatui::text::Span;
 use unicode_width::UnicodeWidthStr;
 
 /// Represents a parsed markdown line with metadata
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct MarkdownLine {
     pub line: Line<'static>,
     pub is_code_block: bool,

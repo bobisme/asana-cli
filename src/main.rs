@@ -7,12 +7,7 @@ mod app;
 mod domain;
 mod ports;
 
-use adapters::{
-    api::{AsanaClient, AsanaTaskRepository},
-    cache::MokaCacheAdapter,
-    config::FileConfigStore,
-    tui::run_tui,
-};
+use adapters::{api::AsanaClient, config::FileConfigStore, tui::run_tui};
 use app::error::AppError;
 use ports::ConfigStore;
 

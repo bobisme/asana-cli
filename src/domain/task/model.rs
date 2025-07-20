@@ -182,24 +182,3 @@ impl Default for TaskFilter {
         }
     }
 }
-
-impl TaskFilter {
-    pub fn to_cache_key(&self) -> String {
-        format!(
-            "tasks:{}:{}:{}:{}:{}",
-            self.workspace
-                .as_ref()
-                .map(|w| w.0.as_str())
-                .unwrap_or("all"),
-            self.project.as_ref().map(|p| p.0.as_str()).unwrap_or("all"),
-            self.assignee
-                .as_ref()
-                .map(|a| a.0.as_str())
-                .unwrap_or("all"),
-            self.completed
-                .map(|c| c.to_string())
-                .unwrap_or_else(|| "all".to_string()),
-            self.search_query.as_deref().unwrap_or(""),
-        )
-    }
-}

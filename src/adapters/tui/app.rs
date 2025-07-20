@@ -70,6 +70,10 @@ pub enum Event {
         dir: Direction,
         count: usize,
     },
+    ScrollDescription {
+        dir: Direction,
+        count: usize,
+    },
     UpdatePaneArea {
         pane: Pane,
         area: Rect,
@@ -109,6 +113,14 @@ pub struct CommentState {
     pub visible_height: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct DescriptionState {
+    pub cached_description_lines: Option<Vec<crate::adapters::tui::md::MarkdownLine>>,
+    pub scroll_offset: usize,
+    pub content_lines: usize,
+    pub visible_height: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct State {
     pub is_running: bool,
@@ -116,6 +128,7 @@ pub struct State {
     pub focus: Pane,
     pub tasks: HashMap<TaskId, Task>,
     pub comment_state: CommentState,
+    pub description_state: DescriptionState,
     pub last_error: Option<AppError>,
     pub fullscreen_pane: bool,
     pub task_list_state: TaskListState,
@@ -130,6 +143,7 @@ impl Default for State {
             focus: Pane::TaskList,
             tasks: Default::default(),
             comment_state: Default::default(),
+            description_state: Default::default(),
             last_error: None,
             task_list_state: TaskListState {
                 is_loading: true,
@@ -176,6 +190,20 @@ impl State {
         self.comment_state
             .content_lines
             .saturating_sub(self.comment_state.visible_height)
+    }
+
+    pub fn description_scroll_offset(&self) -> usize {
+        self.description_state.scroll_offset
+    }
+
+    pub fn description_max_scroll(&self) -> usize {
+        self.description_state
+            .content_lines
+            .saturating_sub(self.description_state.visible_height)
+    }
+
+    pub fn invalidate_description_cache(&mut self) {
+        self.description_state.cached_description_lines = None;
     }
 }
 
@@ -276,6 +304,17 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
 
                 // Reset scroll when switching tasks and trigger comment loading if needed
                 state.comment_state.scroll_offset = 0;
+                state.description_state.scroll_offset = 0;
+                state.invalidate_description_cache();
+
+                // Generate description cache for the new task
+                if let Some(task) = state.selected_task() {
+                    // Use a reasonable default width for cache generation, will be updated by area events if needed
+                    let default_width = 80;
+                    let lines = crate::adapters::tui::components::description_pane::generate_description_cache(task, default_width);
+                    state.description_state.content_lines = lines.len();
+                    state.description_state.cached_description_lines = Some(lines);
+                }
 
                 let next_event = if let Some(task_id) = state.selected_task_id() {
                     if !state.comment_state.comments.contains_key(task_id)
@@ -336,6 +375,22 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 }
                 (Some(state), None)
             }
+            Event::ScrollDescription { dir, count } => {
+                let mut state = state.clone();
+                let max_scroll = state.description_max_scroll();
+
+                match dir {
+                    Direction::Up => {
+                        state.description_state.scroll_offset =
+                            state.description_state.scroll_offset.saturating_sub(count);
+                    }
+                    Direction::Down => {
+                        state.description_state.scroll_offset =
+                            (state.description_state.scroll_offset + count).min(max_scroll);
+                    }
+                }
+                (Some(state), None)
+            }
             Event::UpdatePaneArea {
                 pane: Pane::Comments,
                 area,
@@ -354,6 +409,28 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                         state.comment_state.content_lines = content_lines;
                     }
                 }
+                (Some(state), None)
+            }
+            Event::UpdatePaneArea {
+                pane: Pane::Description,
+                area,
+            } => {
+                let mut state = state.clone();
+                let new_height = area.height.saturating_sub(2) as usize; // Account for borders
+                let new_width = area.width.saturating_sub(2); // Account for borders
+
+                let should_recalculate = state.description_state.visible_height != new_height;
+                state.description_state.visible_height = new_height;
+
+                // Generate description cache if we have a task and no cache exists
+                if let Some(task) = state.selected_task() {
+                    if state.description_state.cached_description_lines.is_none() || should_recalculate {
+                        let lines = crate::adapters::tui::components::description_pane::generate_description_cache(task, new_width);
+                        state.description_state.content_lines = lines.len();
+                        state.description_state.cached_description_lines = Some(lines);
+                    }
+                }
+
                 (Some(state), None)
             }
             Event::UpdatePaneArea { .. } => {
@@ -376,6 +453,16 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                         state.comment_state.scroll_offset = max_scroll;
                     }
                 }
+
+                // Invalidate description cache on terminal resize to force regeneration with new width
+                state.invalidate_description_cache();
+
+                // Ensure description scroll doesn't exceed new content bounds
+                let max_description_scroll = state.description_max_scroll();
+                if state.description_state.scroll_offset > max_description_scroll {
+                    state.description_state.scroll_offset = max_description_scroll;
+                }
+
                 (Some(state), None)
             }
             Event::RequestError(err) => {
