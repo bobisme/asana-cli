@@ -1,9 +1,13 @@
 use ratatui::{
+    crossterm::{
+        self,
+        event::{KeyCode, KeyEvent, KeyModifiers},
+    },
     prelude::*,
     widgets::{Block, Paragraph},
 };
 
-use crate::adapters::tui::{components::Component, theme::Theme, Pane, State};
+use crate::adapters::tui::{components::Component, theme::Theme, Event, Pane, State};
 
 fn get_text_style(query: &str) -> Style {
     if query.is_empty() {
@@ -13,10 +17,81 @@ fn get_text_style(query: &str) -> Style {
     }
 }
 
+fn handle_key_event(state: &State, key: &KeyEvent) -> Option<Event> {
+    let mut buf = [0u8; 4];
+    match (key.code, key.modifiers) {
+        (KeyCode::Backspace, _) => {
+            if state.search.query.is_empty() || state.search.cursor_pos == 0 {
+                return None;
+            }
+            let mut query = state.search.query.clone();
+            query.remove(state.search.cursor_pos - 1);
+            Some(Event::Searched {
+                query,
+                cursor_position: state.search.cursor_pos - 1,
+            })
+        }
+        (KeyCode::Char('w'), KeyModifiers::CONTROL) => {
+            if state.search.query.is_empty() || state.search.cursor_pos == 0 {
+                return None;
+            }
+            let mut query = state.search.query.clone();
+            let cursor_pos = state.search.cursor_pos;
+
+            if cursor_pos == 0 {
+                return None;
+            }
+
+            // Find the start of the previous word
+            let chars: Vec<char> = query.chars().collect();
+            let mut pos = cursor_pos.saturating_sub(1);
+
+            // Skip trailing whitespace
+            while pos > 0 && chars.get(pos).is_some_and(|c| c.is_whitespace()) {
+                pos -= 1;
+            }
+
+            // Delete the word characters
+            while pos > 0 && chars.get(pos).is_some_and(|c| !c.is_whitespace()) {
+                pos -= 1;
+            }
+
+            // If we stopped at whitespace and we're not at the beginning, move forward one
+            if pos > 0 && chars.get(pos).is_some_and(|c| c.is_whitespace()) {
+                pos += 1;
+            }
+
+            // Remove the characters from pos to cursor_pos
+            query.drain(pos..cursor_pos);
+
+            Some(Event::Searched {
+                query,
+                cursor_position: pos,
+            })
+        }
+        (KeyCode::Left, _) => Some(Event::ChangedCursorPosition(state.search.cursor_pos - 1)),
+        (KeyCode::Right, _) => Some(Event::ChangedCursorPosition(state.search.cursor_pos + 1)),
+        (KeyCode::Esc, _) => Some(Event::ClearedSearch),
+        (KeyCode::Enter, _) => Some(Event::FocusedPane(Pane::TaskList)),
+        (KeyCode::Char(c), _) => Some(Event::Searched {
+            query: state.search.query.clone() + c.encode_utf8(&mut buf),
+            cursor_position: state.search.cursor_pos + 1,
+        }),
+        _ => None,
+    }
+}
+
 pub struct SearchBar;
 
 impl Component for SearchBar {
     type State = State;
+
+    fn handle_terminal_event(state: &State, event: &crossterm::event::Event) -> Option<Event> {
+        match event {
+            crossterm::event::Event::Key(key) => handle_key_event(state, key),
+            _ => None,
+        }
+    }
 
     fn render(state: &Self::State, frame: &mut Frame, area: Rect, theme: Theme) {
         let is_focused = state.focus == Pane::SearchBar;
@@ -45,8 +120,7 @@ impl Component for SearchBar {
 
         frame.render_widget(paragraph, area);
 
-        // Render cursor if focused
-        if is_focused && !query.is_empty() {
+        if is_focused {
             let cursor_x = area.x + 1 + state.search.cursor_pos as u16;
             let cursor_y = area.y + 1;
 

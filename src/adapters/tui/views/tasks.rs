@@ -56,6 +56,7 @@ fn handle_key_event(state: &State, key: KeyEvent) -> Option<Event> {
             true => Some(Event::FullScreenOff),
             false => Some(Event::FullScreenOn),
         },
+        (KeyCode::Char('/'), _) => Some(Event::FocusedPane(Pane::SearchBar)),
         _ => None,
     }
 }

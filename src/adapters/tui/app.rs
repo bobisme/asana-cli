@@ -1,4 +1,4 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{cmp, collections::HashMap, sync::Arc, time::Duration};
 
 use color_eyre::Result;
 use ratatui::{
@@ -54,6 +54,12 @@ pub enum Event {
     SelectedTask(usize),
     FullScreenOff,
     FullScreenOn,
+    Searched {
+        query: String,
+        cursor_position: usize,
+    },
+    ChangedCursorPosition(usize),
+    ClearedSearch,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -183,13 +189,20 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 (Some(new_state), Some(Event::SelectedTask(0)))
             }
             Event::SelectedTask(idx) => {
-                let adjusted_idx = idx.clamp(0, state.task_list_state.filtered_task_ids.len() - 1);
-                if Some(adjusted_idx) == state.task_list_state.selected_row_index {
+                let idx = idx.clamp(
+                    0,
+                    state
+                        .task_list_state
+                        .filtered_task_ids
+                        .len()
+                        .saturating_sub(1),
+                );
+                if Some(idx) == state.task_list_state.selected_row_index {
                     return (None, None);
                 }
-                let mut new_state = state.clone();
-                new_state.task_list_state.selected_row_index = Some(adjusted_idx);
-                (Some(new_state), None)
+                let mut state = state.clone();
+                state.task_list_state.selected_row_index = Some(idx);
+                (Some(state), None)
             }
             Event::RequestError(err) => {
                 let mut state = state.clone();
@@ -221,6 +234,39 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 }
                 let mut state = state.clone();
                 state.fullscreen_pane = true;
+                (Some(state), None)
+            }
+            Event::Searched {
+                query,
+                cursor_position,
+            } => {
+                if query == state.search.query {
+                    return (None, None);
+                }
+                // TODO: Fuzzy filter the tasks by title, update task list ids
+                let mut state = state.clone();
+                let query_len = query.len();
+                state.search.query = query;
+                state.search.cursor_pos = cursor_position.clamp(0, query_len);
+                (Some(state), None)
+            }
+            Event::ChangedCursorPosition(pos) => {
+                let pos = pos.clamp(0, state.search.query.len());
+                if pos == state.search.cursor_pos {
+                    return (None, None);
+                }
+                let mut state = state.clone();
+                state.search.cursor_pos = pos;
+                (Some(state), None)
+            }
+            Event::ClearedSearch => {
+                if state.search.query.is_empty() {
+                    return (None, None);
+                }
+                let mut state = state.clone();
+                state.search.query = "".to_owned();
+                state.search.cursor_pos = 0;
+                state.focus = Pane::TaskList;
                 (Some(state), None)
             }
         }

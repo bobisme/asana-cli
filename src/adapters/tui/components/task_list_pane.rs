@@ -41,12 +41,20 @@ fn handle_key_event(state: &State, key: &KeyEvent) -> Option<Event> {
     ) {
         (KeyCode::Down, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
         (KeyCode::Down, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(x + 10)),
-        (KeyCode::Up, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x - 1)),
-        (KeyCode::Up, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(x - 10)),
+        (KeyCode::Up, KeyModifiers::NONE, Some(x)) => {
+            Some(Event::SelectedTask(x.saturating_sub(1)))
+        }
+        (KeyCode::Up, KeyModifiers::SHIFT, Some(x)) => {
+            Some(Event::SelectedTask(x.saturating_sub(10)))
+        }
         (KeyCode::Char('j'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
         (KeyCode::Char('j'), KeyModifiers::CONTROL, Some(x)) => Some(Event::SelectedTask(x + 10)),
-        (KeyCode::Char('k'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x - 1)),
-        (KeyCode::Char('k'), KeyModifiers::CONTROL, Some(x)) => Some(Event::SelectedTask(x - 10)),
+        (KeyCode::Char('k'), KeyModifiers::NONE, Some(x)) => {
+            Some(Event::SelectedTask(x.saturating_sub(1)))
+        }
+        (KeyCode::Char('k'), KeyModifiers::CONTROL, Some(x)) => {
+            Some(Event::SelectedTask(x.saturating_sub(10)))
+        }
         _ => None,
     }
 }
