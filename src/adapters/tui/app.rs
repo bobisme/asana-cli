@@ -10,6 +10,7 @@ use ratatui::{
         self,
         terminal::{disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
+    layout::Rect,
     prelude::*,
 };
 use tokio::sync::mpsc;
@@ -48,6 +49,12 @@ pub enum Pane {
     TaskList,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum Direction {
+    Up,
+    Down,
+}
+
 #[derive(Debug, Clone)]
 pub enum Event {
     FocusedPane(Pane),
@@ -59,6 +66,15 @@ pub enum Event {
     RequestComments(TaskId),
     ReceivedComments(TaskId, Vec<Comment>),
     CommentLoadError(TaskId, RepositoryError),
+    ScrollComments {
+        dir: Direction,
+        count: usize,
+    },
+    UpdatePaneArea {
+        pane: Pane,
+        area: Rect,
+    },
+    TerminalResized,
     FullScreenOff,
     FullScreenOn,
     Searched {
@@ -83,15 +99,23 @@ pub struct SearchState {
     pub cursor_pos: usize,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct CommentState {
+    pub comments: HashMap<TaskId, Vec<Comment>>,
+    pub loading_comments: HashSet<TaskId>,
+    pub comment_errors: HashMap<TaskId, AppError>,
+    pub scroll_offset: usize,
+    pub content_lines: usize,
+    pub visible_height: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct State {
     pub is_running: bool,
     pub view: View,
     pub focus: Pane,
     pub tasks: HashMap<TaskId, Task>,
-    pub comments: HashMap<TaskId, Vec<Comment>>,
-    pub loading_comments: HashSet<TaskId>,
-    pub comment_errors: HashMap<TaskId, AppError>,
+    pub comment_state: CommentState,
     pub last_error: Option<AppError>,
     pub fullscreen_pane: bool,
     pub task_list_state: TaskListState,
@@ -105,9 +129,7 @@ impl Default for State {
             view: View::TaskList,
             focus: Pane::TaskList,
             tasks: Default::default(),
-            comments: Default::default(),
-            loading_comments: Default::default(),
-            comment_errors: Default::default(),
+            comment_state: Default::default(),
             last_error: None,
             task_list_state: TaskListState {
                 is_loading: true,
@@ -132,18 +154,28 @@ impl State {
 
     pub fn selected_task_comments(&self) -> Option<&Vec<Comment>> {
         let task_id = self.selected_task_id()?;
-        self.comments.get(task_id)
+        self.comment_state.comments.get(task_id)
     }
 
     pub fn is_loading_comments(&self) -> bool {
         self.selected_task_id()
-            .map(|task_id| self.loading_comments.contains(task_id))
+            .map(|task_id| self.comment_state.loading_comments.contains(task_id))
             .unwrap_or(false)
     }
 
     pub fn comment_load_error(&self) -> Option<&AppError> {
         let task_id = self.selected_task_id()?;
-        self.comment_errors.get(task_id)
+        self.comment_state.comment_errors.get(task_id)
+    }
+
+    pub fn comments_scroll_offset(&self) -> usize {
+        self.comment_state.scroll_offset
+    }
+
+    pub fn comments_max_scroll(&self) -> usize {
+        self.comment_state
+            .content_lines
+            .saturating_sub(self.comment_state.visible_height)
     }
 }
 
@@ -242,11 +274,13 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 let mut state = state.clone();
                 state.task_list_state.selected_row_index = idx;
 
-                // Trigger comment loading for the selected task if not already loaded or loading
+                // Reset scroll when switching tasks and trigger comment loading if needed
+                state.comment_state.scroll_offset = 0;
+
                 let next_event = if let Some(task_id) = state.selected_task_id() {
-                    if !state.comments.contains_key(task_id)
-                        && !state.loading_comments.contains(task_id)
-                        && !state.comment_errors.contains_key(task_id)
+                    if !state.comment_state.comments.contains_key(task_id)
+                        && !state.comment_state.loading_comments.contains(task_id)
+                        && !state.comment_state.comment_errors.contains_key(task_id)
                     {
                         Some(Event::RequestComments(task_id.clone()))
                     } else {
@@ -260,23 +294,88 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
             }
             Event::RequestComments(task_id) => {
                 let mut state = state.clone();
-                state.loading_comments.insert(task_id.clone());
-                state.comment_errors.remove(&task_id);
+                state.comment_state.loading_comments.insert(task_id.clone());
+                state.comment_state.comment_errors.remove(&task_id);
                 self.load_comments(task_id, tx);
                 (Some(state), None)
             }
             Event::ReceivedComments(task_id, comments) => {
                 let mut state = state.clone();
-                state.loading_comments.remove(&task_id);
-                state.comments.insert(task_id, comments);
+                state.comment_state.loading_comments.remove(&task_id);
+
+                // Calculate content lines for the new comments
+                let content_lines = crate::adapters::tui::components::comments_pane::CommentsPane::calculate_content_lines(&comments, 80); // Default width, will be updated by area events
+                state.comment_state.content_lines = content_lines;
+
+                state.comment_state.comments.insert(task_id, comments);
+                state.comment_state.scroll_offset = 0; // Reset scroll for new content
                 (Some(state), None)
             }
             Event::CommentLoadError(task_id, err) => {
                 let mut state = state.clone();
-                state.loading_comments.remove(&task_id);
+                state.comment_state.loading_comments.remove(&task_id);
                 state
+                    .comment_state
                     .comment_errors
                     .insert(task_id, AppError::Repository(err));
+                (Some(state), None)
+            }
+            Event::ScrollComments { dir, count } => {
+                let mut state = state.clone();
+                let max_scroll = state.comments_max_scroll();
+
+                match dir {
+                    Direction::Up => {
+                        state.comment_state.scroll_offset =
+                            state.comment_state.scroll_offset.saturating_sub(count);
+                    }
+                    Direction::Down => {
+                        state.comment_state.scroll_offset =
+                            (state.comment_state.scroll_offset + count).min(max_scroll);
+                    }
+                }
+                (Some(state), None)
+            }
+            Event::UpdatePaneArea {
+                pane: Pane::Comments,
+                area,
+            } => {
+                let mut state = state.clone();
+                let new_height = area.height.saturating_sub(2) as usize; // Account for borders
+                let new_width = area.width.saturating_sub(2); // Account for borders
+
+                let should_recalculate = state.comment_state.visible_height != new_height;
+                state.comment_state.visible_height = new_height;
+
+                // Recalculate content lines if we have comments and width might have changed
+                if should_recalculate {
+                    if let Some(comments) = state.selected_task_comments() {
+                        let content_lines = crate::adapters::tui::components::comments_pane::CommentsPane::calculate_content_lines(comments, new_width);
+                        state.comment_state.content_lines = content_lines;
+                    }
+                }
+                (Some(state), None)
+            }
+            Event::UpdatePaneArea { .. } => {
+                // Ignore other pane area updates for now
+                (None, None)
+            }
+            Event::TerminalResized => {
+                let mut state = state.clone();
+                // Recalculate content lines for current comments if we have any
+                if let Some(comments) = state.selected_task_comments() {
+                    // Estimate comment pane width: 60% of terminal width for right side, minus borders
+                    // This is approximate but should be close enough for line counting
+                    let estimated_width = 80; // Default reasonable width
+                    let content_lines = crate::adapters::tui::components::comments_pane::CommentsPane::calculate_content_lines(comments, estimated_width);
+                    state.comment_state.content_lines = content_lines;
+
+                    // Ensure scroll doesn't exceed new content bounds
+                    let max_scroll = state.comments_max_scroll();
+                    if state.comment_state.scroll_offset > max_scroll {
+                        state.comment_state.scroll_offset = max_scroll;
+                    }
+                }
                 (Some(state), None)
             }
             Event::RequestError(err) => {
@@ -354,6 +453,12 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
 fn handle_event(state: &State) -> Result<Option<Event>> {
     if crossterm::event::poll(Duration::from_millis(16))? {
         let terminal_event = crossterm::event::read()?;
+
+        // Handle terminal resize events first
+        if let crossterm::event::Event::Resize(_, _) = terminal_event {
+            return Ok(Some(Event::TerminalResized));
+        }
+
         let event = match state.focus {
             Pane::Comments => CommentsPane::handle_terminal_event(state, &terminal_event),
             Pane::Description => DescriptionPane::handle_terminal_event(state, &terminal_event),

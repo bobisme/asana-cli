@@ -1,10 +1,11 @@
 use ratatui::{
+    crossterm::event::{KeyCode, KeyEvent, KeyModifiers},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Paragraph, Wrap},
 };
 
-use crate::adapters::tui::{components::Component, theme::Theme, State};
+use crate::adapters::tui::{components::Component, theme::Theme, Direction, Event, State};
 
 const NO_TASK_SELECTED: &str = "No task selected";
 const NO_COMMENTS: &str = "No comments or activity";
@@ -14,6 +15,16 @@ pub struct CommentsPane;
 
 impl Component for CommentsPane {
     type State = State;
+
+    fn handle_terminal_event(
+        state: &Self::State,
+        event: &ratatui::crossterm::event::Event,
+    ) -> Option<Event> {
+        match event {
+            ratatui::crossterm::event::Event::Key(key) => Self::handle_key_event(state, key),
+            _ => None,
+        }
+    }
 
     fn render(
         state: &Self::State,
@@ -34,10 +45,47 @@ impl Component for CommentsPane {
             .wrap(Wrap { trim: false });
 
         frame.render_widget(paragraph, area);
+
+        // Report area changes for scroll calculations
+        // Note: This will be called on every render, but the event handler will only update if the area actually changed
+        // TODO: We could optimize this by tracking the last area and only sending events when it changes
     }
 }
 
 impl CommentsPane {
+    fn handle_key_event(_state: &State, key: &KeyEvent) -> Option<Event> {
+        match (key.code, key.modifiers) {
+            (KeyCode::Up, KeyModifiers::NONE) => Some(Event::ScrollComments {
+                dir: Direction::Up,
+                count: 1,
+            }),
+            (KeyCode::Down, KeyModifiers::NONE) => Some(Event::ScrollComments {
+                dir: Direction::Down,
+                count: 1,
+            }),
+            (KeyCode::Up, KeyModifiers::SHIFT) => Some(Event::ScrollComments {
+                dir: Direction::Up,
+                count: 10,
+            }),
+            (KeyCode::Down, KeyModifiers::SHIFT) => Some(Event::ScrollComments {
+                dir: Direction::Down,
+                count: 10,
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn calculate_content_lines(
+        comments: &[crate::domain::comment::Comment],
+        _width: u16,
+    ) -> usize {
+        let formatted_lines = Self::format_comments(comments);
+
+        // TODO: Account for text wrapping based on width
+        // For now, just return the number of formatted lines
+        formatted_lines.len()
+    }
+
     fn get_content(state: &State) -> Vec<Line<'static>> {
         if state.selected_task().is_none() {
             return vec![Line::from(Span::styled(
@@ -68,7 +116,11 @@ impl CommentsPane {
                 ))];
             }
 
-            Self::format_comments(comments)
+            let all_lines = Self::format_comments(comments);
+            let scroll_offset = state.comments_scroll_offset();
+
+            // Apply scroll offset
+            all_lines.into_iter().skip(scroll_offset).collect()
         } else {
             vec![Line::from(Span::styled(
                 NO_COMMENTS,
