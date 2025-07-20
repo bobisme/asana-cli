@@ -1,17 +1,9 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 
-use crate::adapters::tui::{components::Component, Pane, State};
-
-fn get_border_style(is_focused: bool) -> Style {
-    if is_focused {
-        Style::default().fg(Color::Yellow)
-    } else {
-        Style::default().fg(Color::Gray)
-    }
-}
+use crate::adapters::tui::{components::Component, theme::Theme, Pane, State};
 
 fn get_text_style(query: &str) -> Style {
     if query.is_empty() {
@@ -26,15 +18,14 @@ pub struct SearchBar;
 impl Component for SearchBar {
     type State = State;
 
-    fn render(state: &Self::State, frame: &mut Frame, area: Rect) {
+    fn render(state: &Self::State, frame: &mut Frame, area: Rect, theme: Theme) {
         let is_focused = state.focus == Pane::SearchBar;
         let title = "Search";
-        let border_style = get_border_style(is_focused);
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style);
+            .borders(theme.borders)
+            .border_type(theme.border_type)
+            .border_style(theme.border_style);
 
         let query = &state.search.query;
 

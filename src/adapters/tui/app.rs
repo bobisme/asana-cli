@@ -52,6 +52,8 @@ pub enum Event {
     ReceivedTasks(Vec<Task>),
     RequestError(RepositoryError),
     SelectedTask(usize),
+    FullScreenOff,
+    FullScreenOn,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -203,6 +205,22 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
             Event::FocusedPane(pane) => {
                 let mut state = state.clone();
                 state.focus = pane;
+                (Some(state), None)
+            }
+            Event::FullScreenOff => {
+                if !state.fullscreen_pane {
+                    return (None, None);
+                }
+                let mut state = state.clone();
+                state.fullscreen_pane = false;
+                (Some(state), None)
+            }
+            Event::FullScreenOn => {
+                if state.fullscreen_pane {
+                    return (None, None);
+                }
+                let mut state = state.clone();
+                state.fullscreen_pane = true;
                 (Some(state), None)
             }
         }

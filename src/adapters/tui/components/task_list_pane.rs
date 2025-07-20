@@ -4,19 +4,18 @@ use ratatui::{
         event::{KeyCode, KeyEvent, KeyModifiers},
     },
     prelude::*,
-    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
+    widgets::{Block, Cell, Paragraph, Row, Table, TableState, Wrap},
 };
 
 use crate::{
-    adapters::tui::{components::Component, Event, Pane, State},
+    adapters::tui::{components::Component, theme::Theme, Event, State},
     domain::task::Task,
 };
 
 fn task_icon(task: &Task) -> char {
-    if task.is_milestone() {
-        return '◇'; // Milestone
-    } else {
-        return '○'; // Task (open circle)
+    match task.is_milestone() {
+        true => '◇',
+        false => '○', // Task (open circle)
     }
 }
 
@@ -68,20 +67,20 @@ impl Component for TaskListPane {
         }
     }
 
-    fn render(state: &Self::State, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
+    fn render(
+        state: &Self::State,
+        frame: &mut ratatui::Frame,
+        area: ratatui::prelude::Rect,
+        theme: Theme,
+    ) {
         let len = state.task_list_state.filtered_task_ids.len();
         let title = format!("Tasks ({len})");
-        let border_style = if state.focus == Pane::TaskList {
-            Style::default().fg(Color::Green)
-        } else {
-            Style::default().fg(Color::Gray)
-        };
 
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style);
+            .borders(theme.borders)
+            .border_type(theme.border_type)
+            .border_style(theme.border_style);
 
         if state.task_list_state.is_loading {
             let paragraph = Paragraph::new("Loading tasks...")

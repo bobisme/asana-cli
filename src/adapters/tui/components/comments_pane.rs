@@ -1,32 +1,26 @@
-use ratatui::widgets::{BorderType, Borders, Paragraph};
-use ratatui::{prelude::*, widgets::Block};
+use ratatui::widgets::{Block, Paragraph};
 
-use crate::adapters::tui::{components::Component, Pane, State};
+use crate::adapters::tui::{components::Component, theme::Theme, State};
 
 // const NO_COMMENTS: &str = "No comments available";
-
-fn get_border_style(is_focused: bool) -> Style {
-    if is_focused {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::Gray)
-    }
-}
 
 pub struct CommentsPane;
 
 impl Component for CommentsPane {
     type State = State;
 
-    fn render(state: &Self::State, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
-        let is_focused = state.focus == Pane::Comments;
-        let border_style = get_border_style(is_focused);
+    fn render(
+        _state: &Self::State,
+        frame: &mut ratatui::Frame,
+        area: ratatui::prelude::Rect,
+        theme: Theme,
+    ) {
         let title = "Activity";
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style);
+            .borders(theme.borders)
+            .border_type(theme.border_type)
+            .border_style(theme.border_style);
         let paragraph = Paragraph::new("Comments and stuff...").block(block); //.style(text_style)
 
         frame.render_widget(paragraph, area);

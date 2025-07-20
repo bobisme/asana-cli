@@ -12,23 +12,27 @@ use crate::adapters::tui::{
         comments_pane::CommentsPane, description_pane::DescriptionPane, search_bar::SearchBar,
         task_list_pane::TaskListPane, Component,
     },
+    theme::Theme,
     Event, Pane, State,
 };
 
 use super::View;
 
-fn render_fullscreen_pane(state: &State, frame: &mut Frame, pane: Pane) {
+fn render_fullscreen_pane(state: &State, frame: &mut Frame, pane: Pane) -> bool {
     match pane {
         Pane::TaskList => {
-            TaskListPane::render(&state, frame, frame.area());
+            TaskListPane::render(state, frame, frame.area(), Theme::full_screen());
+            true
         }
-        // Pane::Description => {
-        //     self.render_description_fullscreen(frame, frame.area());
-        // }
-        // Pane::Comments => {
-        //     self.render_comments_fullscreen(frame, frame.area());
-        // }
-        _ => {}
+        Pane::Description => {
+            DescriptionPane::render(state, frame, frame.area(), Theme::full_screen());
+            true
+        }
+        Pane::Comments => {
+            CommentsPane::render(state, frame, frame.area(), Theme::full_screen());
+            true
+        }
+        _ => false,
     }
 }
 
@@ -48,6 +52,10 @@ fn handle_key_event(state: &State, key: KeyEvent) -> Option<Event> {
             Pane::TaskList => Pane::Comments,
         })),
         (KeyCode::Char('c'), KeyModifiers::CONTROL) => Some(Event::Quit),
+        (KeyCode::Char('f'), KeyModifiers::NONE) => match state.fullscreen_pane {
+            true => Some(Event::FullScreenOff),
+            false => Some(Event::FullScreenOn),
+        },
         _ => None,
     }
 }
@@ -66,7 +74,10 @@ impl View for TaskView {
     fn render(state: &State, frame: &mut Frame) {
         // Check if we're in fullscreen mode
         if state.fullscreen_pane {
-            return render_fullscreen_pane(state, frame, state.focus);
+            let is_fullscreen = render_fullscreen_pane(state, frame, state.focus);
+            if is_fullscreen {
+                return;
+            }
         }
 
         // Normal 3-pane layout
@@ -79,7 +90,11 @@ impl View for TaskView {
             ])
             .split(frame.area());
 
-        SearchBar::render(state, frame, main_chunks[0]);
+        let theme = match state.focus {
+            Pane::SearchBar => Theme::focused(),
+            _ => Theme::default(),
+        };
+        SearchBar::render(state, frame, main_chunks[0], theme);
 
         // Split main content area: task list (left) | right side
         let content_chunks = Layout::default()
@@ -90,7 +105,11 @@ impl View for TaskView {
             ])
             .split(main_chunks[1]);
 
-        TaskListPane::render(state, frame, content_chunks[0]);
+        let theme = match state.focus {
+            Pane::TaskList => Theme::focused(),
+            _ => Theme::default(),
+        };
+        TaskListPane::render(state, frame, content_chunks[0], theme);
 
         // Split right side vertically: description (top) | comments (bottom)
         let right_chunks = Layout::default()
@@ -101,8 +120,16 @@ impl View for TaskView {
             ])
             .split(content_chunks[1]);
 
-        DescriptionPane::render(state, frame, right_chunks[0]);
-        CommentsPane::render(state, frame, right_chunks[1]);
+        let theme = match state.focus {
+            Pane::Description => Theme::focused(),
+            _ => Theme::default(),
+        };
+        DescriptionPane::render(state, frame, right_chunks[0], theme);
+        let theme = match state.focus {
+            Pane::Comments => Theme::focused(),
+            _ => Theme::default(),
+        };
+        CommentsPane::render(state, frame, right_chunks[1], theme);
         // self.render_description_pane_standalone(frame, right_chunks[0]);
 
         // Render comments pane (right bottom)

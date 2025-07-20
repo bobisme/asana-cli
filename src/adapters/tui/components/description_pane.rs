@@ -1,35 +1,41 @@
 use ratatui::{
     prelude::*,
-    widgets::{Block, BorderType, Borders, Paragraph},
+    widgets::{Block, Paragraph},
 };
 
-use crate::adapters::tui::{components::Component, Pane, State};
+use crate::adapters::tui::{components::Component, theme::Theme, State};
 
 pub struct DescriptionPane;
-
-fn get_border_style(is_focused: bool) -> Style {
-    if is_focused {
-        Style::default().fg(Color::Green)
-    } else {
-        Style::default().fg(Color::Gray)
-    }
-}
 
 impl Component for DescriptionPane {
     type State = State;
 
-    fn render(state: &Self::State, frame: &mut Frame, area: Rect) {
-        let is_focused = state.focus == Pane::Description;
-        let border_style = get_border_style(is_focused);
+    fn render(state: &Self::State, frame: &mut Frame, area: Rect, theme: Theme) {
         let title = "Description";
-        // let task = state.selected_task();
 
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
-            .border_style(border_style);
-        let paragraph = Paragraph::new("Task detail").block(block); //.style(text_style)
+            .borders(theme.borders)
+            .border_type(theme.border_type)
+            .border_style(theme.border_style);
+
+        let Some(task) = state.selected_task() else {
+            let paragraph = Paragraph::new("No task selected")
+                .block(block)
+                .style(Style::new().dark_gray());
+            frame.render_widget(paragraph, area);
+            return;
+        };
+
+        let Some(description) = &task.description else {
+            let paragraph = Paragraph::new("No description")
+                .block(block)
+                .style(Style::new().red());
+            frame.render_widget(paragraph, area);
+            return;
+        };
+
+        let paragraph = Paragraph::new(description.clone()).block(block);
 
         frame.render_widget(paragraph, area);
     }
