@@ -55,22 +55,30 @@ impl Component for CommentsPane {
 impl CommentsPane {
     fn handle_key_event(_state: &State, key: &KeyEvent) -> Option<Event> {
         match (key.code, key.modifiers) {
-            (KeyCode::Up, KeyModifiers::NONE) => Some(Event::ScrollComments {
-                dir: Direction::Up,
-                count: 1,
-            }),
-            (KeyCode::Down, KeyModifiers::NONE) => Some(Event::ScrollComments {
-                dir: Direction::Down,
-                count: 1,
-            }),
-            (KeyCode::Up, KeyModifiers::SHIFT) => Some(Event::ScrollComments {
-                dir: Direction::Up,
-                count: 10,
-            }),
-            (KeyCode::Down, KeyModifiers::SHIFT) => Some(Event::ScrollComments {
-                dir: Direction::Down,
-                count: 10,
-            }),
+            (KeyCode::Up, KeyModifiers::NONE) | (KeyCode::Char('k'), KeyModifiers::NONE) => {
+                Some(Event::ScrollComments {
+                    dir: Direction::Up,
+                    count: 1,
+                })
+            }
+            (KeyCode::Down, KeyModifiers::NONE) | (KeyCode::Char('j'), KeyModifiers::NONE) => {
+                Some(Event::ScrollComments {
+                    dir: Direction::Down,
+                    count: 1,
+                })
+            }
+            (KeyCode::Up, KeyModifiers::SHIFT) | (KeyCode::Char('k'), KeyModifiers::CONTROL) => {
+                Some(Event::ScrollComments {
+                    dir: Direction::Up,
+                    count: 10,
+                })
+            }
+            (KeyCode::Down, KeyModifiers::SHIFT) | (KeyCode::Char('j'), KeyModifiers::CONTROL) => {
+                Some(Event::ScrollComments {
+                    dir: Direction::Down,
+                    count: 10,
+                })
+            }
             _ => None,
         }
     }

@@ -45,7 +45,7 @@ fn handle_key_event(state: &State, key: KeyEvent) -> Option<Event> {
             Pane::SearchBar => Pane::TaskList,
             Pane::TaskList => Pane::Description,
         })),
-        (KeyCode::Tab, KeyModifiers::SHIFT) => Some(Event::FocusedPane(match state.focus {
+        (KeyCode::Tab, KeyModifiers::SHIFT) | (KeyCode::BackTab, _) => Some(Event::FocusedPane(match state.focus {
             Pane::Comments => Pane::Description,
             Pane::Description => Pane::TaskList,
             Pane::SearchBar => Pane::TaskList,
