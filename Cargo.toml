@@ -36,14 +36,11 @@ htmd = "0.2"
 kuchiki = "0.8"
 
 # Fuzzy search
-nucleo = "0.5"
+nucleo-matcher = "0.3.1"
 
 # Error handling
 thiserror = "2.0"
 color-eyre = "0.6"
-
-# Async traits
-async-trait = "0.1"
 
 # Logging
 tracing = "0.1"
@@ -55,8 +52,8 @@ uuid = { version = "1.0", features = ["v4", "serde"] }
 # URL encoding
 urlencoding = "2.1"
 # Markdown parsing
-pulldown-cmark = "0.11"
-unicode-width = "0.1"
+pulldown-cmark = "0.13"
+unicode-width = "0.2"
 
 [dev-dependencies]
 tokio-test = "0.4"

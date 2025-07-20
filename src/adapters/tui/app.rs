@@ -1,4 +1,4 @@
-use std::{cmp, collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use color_eyre::Result;
 use ratatui::{
@@ -11,7 +11,7 @@ use ratatui::{
 use tokio::sync::mpsc;
 use tracing::info;
 
-use super::views::View as _;
+use super::{search::fuzzy_search_tasks, views::View as _};
 use crate::domain::{
     comment::Comment,
     task::{repo::TaskRepository, Task, TaskFilter, TaskId},
@@ -51,7 +51,7 @@ pub enum Event {
     Quit,
     ReceivedTasks(Vec<Task>),
     RequestError(RepositoryError),
-    SelectedTask(usize),
+    SelectedTask(Option<usize>),
     FullScreenOff,
     FullScreenOn,
     Searched {
@@ -186,22 +186,24 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 new_state.tasks = map;
                 new_state.task_list_state.is_loading = false;
                 new_state.task_list_state.filtered_task_ids = list;
-                (Some(new_state), Some(Event::SelectedTask(0)))
+                (Some(new_state), Some(Event::SelectedTask(Some(0))))
             }
             Event::SelectedTask(idx) => {
-                let idx = idx.clamp(
-                    0,
-                    state
-                        .task_list_state
-                        .filtered_task_ids
-                        .len()
-                        .saturating_sub(1),
-                );
-                if Some(idx) == state.task_list_state.selected_row_index {
+                let idx = idx.map(|x| {
+                    x.clamp(
+                        0,
+                        state
+                            .task_list_state
+                            .filtered_task_ids
+                            .len()
+                            .saturating_sub(1),
+                    )
+                });
+                if idx == state.task_list_state.selected_row_index {
                     return (None, None);
                 }
                 let mut state = state.clone();
-                state.task_list_state.selected_row_index = Some(idx);
+                state.task_list_state.selected_row_index = idx;
                 (Some(state), None)
             }
             Event::RequestError(err) => {
@@ -243,11 +245,14 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 if query == state.search.query {
                     return (None, None);
                 }
-                // TODO: Fuzzy filter the tasks by title, update task list ids
                 let mut state = state.clone();
                 let query_len = query.len();
-                state.search.query = query;
+                state.search.query = query.clone();
                 state.search.cursor_pos = cursor_position.clamp(0, query_len);
+
+                // Perform fuzzy search using search module
+                state.task_list_state.filtered_task_ids = fuzzy_search_tasks(&query, &state.tasks);
+
                 (Some(state), None)
             }
             Event::ChangedCursorPosition(pos) => {

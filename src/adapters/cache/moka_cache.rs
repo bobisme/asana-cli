@@ -1,5 +1,4 @@
 use crate::ports::Cache;
-use async_trait::async_trait;
 use moka::future::Cache as MokaCache;
 use std::hash::Hash;
 use std::time::Duration;
@@ -28,7 +27,6 @@ where
     }
 }
 
-#[async_trait]
 impl<K, V> Cache<K, V> for MokaCacheAdapter<K, V>
 where
     K: Hash + Eq + Send + Sync + 'static,
@@ -58,7 +56,6 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tokio_test;
 
     #[tokio::test]
     async fn test_cache_operations() {

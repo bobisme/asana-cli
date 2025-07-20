@@ -1,7 +1,5 @@
-use async_trait::async_trait;
 use std::hash::Hash;
 
-#[async_trait]
 pub trait Cache<K, V>: Send + Sync
 where
     K: Hash + Eq + Send + Sync + 'static,

@@ -634,7 +634,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                         }
                         link_destination = None;
                     }
-                    TagEnd::BlockQuote => {
+                    TagEnd::BlockQuote(_) => {
                         emphasis_stack.pop();
                         finish_line(&mut current_line_spans, &mut lines, false);
                         add_blank_line(&mut lines);

@@ -39,21 +39,23 @@ fn handle_key_event(state: &State, key: &KeyEvent) -> Option<Event> {
         key.modifiers,
         state.task_list_state.selected_row_index,
     ) {
-        (KeyCode::Down, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
-        (KeyCode::Down, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(x + 10)),
+        (KeyCode::Down, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(Some(x + 1))),
+        (KeyCode::Down, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(Some(x + 10))),
         (KeyCode::Up, KeyModifiers::NONE, Some(x)) => {
-            Some(Event::SelectedTask(x.saturating_sub(1)))
+            Some(Event::SelectedTask(Some(x.saturating_sub(1))))
         }
         (KeyCode::Up, KeyModifiers::SHIFT, Some(x)) => {
-            Some(Event::SelectedTask(x.saturating_sub(10)))
+            Some(Event::SelectedTask(Some(x.saturating_sub(10))))
         }
-        (KeyCode::Char('j'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
-        (KeyCode::Char('j'), KeyModifiers::CONTROL, Some(x)) => Some(Event::SelectedTask(x + 10)),
+        (KeyCode::Char('j'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(Some(x + 1))),
+        (KeyCode::Char('j'), KeyModifiers::CONTROL, Some(x)) => {
+            Some(Event::SelectedTask(Some(x + 10)))
+        }
         (KeyCode::Char('k'), KeyModifiers::NONE, Some(x)) => {
-            Some(Event::SelectedTask(x.saturating_sub(1)))
+            Some(Event::SelectedTask(Some(x.saturating_sub(1))))
         }
         (KeyCode::Char('k'), KeyModifiers::CONTROL, Some(x)) => {
-            Some(Event::SelectedTask(x.saturating_sub(10)))
+            Some(Event::SelectedTask(Some(x.saturating_sub(10))))
         }
         _ => None,
     }

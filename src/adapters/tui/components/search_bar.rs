@@ -77,6 +77,15 @@ fn handle_key_event(state: &State, key: &KeyEvent) -> Option<Event> {
             query: state.search.query.clone() + c.encode_utf8(&mut buf),
             cursor_position: state.search.cursor_pos + 1,
         }),
+        (KeyCode::Up, _) => Some(Event::SelectedTask(
+            state
+                .task_list_state
+                .selected_row_index
+                .map(|x| x.saturating_sub(1)),
+        )),
+        (KeyCode::Down, _) => Some(Event::SelectedTask(
+            state.task_list_state.selected_row_index.map(|x| x + 1),
+        )),
         _ => None,
     }
 }
