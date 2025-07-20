@@ -1,25 +1,35 @@
-use std::collections::HashMap;
-use std::sync::Arc;
-use std::time::Duration;
+use std::{collections::HashMap, sync::Arc, time::Duration};
 
 use color_eyre::Result;
-use ratatui::crossterm;
-use ratatui::crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::{
     crossterm::{
-        event::KeyEvent,
+        self,
         terminal::{disable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
     },
     prelude::*,
 };
 use tokio::sync::mpsc;
+use tracing::info;
 
-use crate::adapters::api::{AsanaClient, AsanaTaskRepository};
-use crate::adapters::tui::views;
-use crate::app::error::{AppError, RepositoryError};
-use crate::domain::comment::Comment;
-use crate::domain::task::repo::TaskRepository;
-use crate::domain::task::{Task, TaskFilter, TaskId};
+use super::views::View as _;
+use crate::domain::{
+    comment::Comment,
+    task::{repo::TaskRepository, Task, TaskFilter, TaskId},
+};
+use crate::{
+    adapters::tui::views::tasks::TaskView,
+    app::error::{AppError, RepositoryError},
+};
+use crate::{
+    adapters::{
+        api::{AsanaClient, AsanaTaskRepository},
+        tui::components::{
+            comments_pane::CommentsPane, description_pane::DescriptionPane, search_bar::SearchBar,
+            task_list_pane::TaskListPane, Component,
+        },
+    },
+    domain::workspace::repo::WorkspaceRepository,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub enum View {
@@ -36,15 +46,12 @@ pub enum Pane {
 
 #[derive(Debug, Clone)]
 pub enum Event {
+    FocusedPane(Pane),
     Init,
-    Key(KeyEvent),
+    Quit,
     ReceivedTasks(Vec<Task>),
     RequestError(RepositoryError),
-    // Increment,
-    // Decrement,
-    // FetchData,
-    // DataReceived(Result<String, String>), // Success(data) or Error(message)
-    Quit,
+    SelectedTask(usize),
 }
 
 #[derive(Debug, Default, Clone)]
@@ -69,9 +76,7 @@ pub struct State {
     pub tasks: HashMap<TaskId, Task>,
     pub comments: HashMap<String, Comment>,
     pub last_error: Option<AppError>,
-
-    pub focused_pane: Pane,
-    pub fullscreen_pane: Option<Pane>,
+    pub fullscreen_pane: bool,
     pub task_list_state: TaskListState,
     pub search: SearchState,
 }
@@ -84,11 +89,13 @@ impl Default for State {
             focus: Pane::TaskList,
             tasks: Default::default(),
             comments: Default::default(),
-            focused_pane: Pane::TaskList,
             last_error: None,
-            task_list_state: Default::default(),
+            task_list_state: TaskListState {
+                is_loading: true,
+                ..Default::default()
+            },
             search: Default::default(),
-            fullscreen_pane: None,
+            fullscreen_pane: false,
         }
     }
 }
@@ -106,27 +113,47 @@ impl State {
 }
 
 fn view(state: &State, frame: &mut Frame) {
-    views::tasks::render(state, frame);
-}
-
-fn handle_task_list_key(_state: &State, key: KeyEvent) -> (Option<State>, Option<Event>) {
-    match key {
-        KeyEvent {
-            code: KeyCode::Char('q'),
-            modifiers: KeyModifiers::NONE,
-            ..
-        } => (None, Some(Event::Quit)),
-        _ => (None, None),
+    match state.view {
+        View::TaskList => TaskView::render(state, frame),
     }
 }
 
-struct App<TaskRepo: TaskRepository> {
-    task_repo: Arc<TaskRepo>,
+struct App<T: TaskRepository + WorkspaceRepository> {
+    task_repo: Arc<T>,
 }
 
-impl<TaskRepo: TaskRepository> App<TaskRepo> {
-    fn task_repository(&self) -> Arc<TaskRepo> {
+impl<T: TaskRepository + WorkspaceRepository> App<T> {
+    fn task_repository(&self) -> Arc<T> {
         Arc::clone(&self.task_repo)
+    }
+
+    fn initialize(&self, tx: &mpsc::UnboundedSender<Event>) {
+        let task_repo = self.task_repository();
+        let tx = tx.clone();
+        tokio::spawn(async move {
+            let closure = async move || -> std::result::Result<Event, RepositoryError> {
+                let workspaces = task_repo.list_workspaces().await?;
+                info!(?workspaces, "got workspaces");
+                let Some(workspace) = workspaces.first() else {
+                    return Err(RepositoryError::NotFound("No default workspace".to_owned()));
+                };
+                let user = task_repo.get_current_user().await?;
+                info!(?user, "got user");
+                let filter = TaskFilter {
+                    assignee: Some(user.id.clone()),
+                    workspace: Some(workspace.id.clone()),
+                    ..Default::default()
+                };
+                let tasks = task_repo.list_tasks(&filter).await?;
+                info!("got {} tasks", tasks.len());
+                Ok(Event::ReceivedTasks(tasks))
+            };
+            let event = match closure().await {
+                Ok(event) => event,
+                Err(e) => Event::RequestError(e),
+            };
+            let _ = tx.send(event);
+        });
     }
 
     async fn update(
@@ -137,27 +164,30 @@ impl<TaskRepo: TaskRepository> App<TaskRepo> {
     ) -> (Option<State>, Option<Event>) {
         match event {
             Event::Init => {
-                let repo = self.task_repository();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let filter = TaskFilter::default();
-                    let future = repo.list_tasks(&filter);
-                    let event = match future.await {
-                        Ok(tasks) => Event::ReceivedTasks(tasks),
-                        Err(e) => Event::RequestError(e),
-                    };
-                    let _ = tx.send(event);
-                });
+                self.initialize(tx);
                 (None, None)
             }
             Event::ReceivedTasks(tasks) => {
-                let mut state = state.clone();
+                let mut new_state = state.clone();
                 let mut map = HashMap::new();
+                let mut list = Vec::new();
                 for task in tasks.iter() {
                     map.insert(task.id.clone(), task.clone());
+                    list.push(task.id.clone());
                 }
-                state.tasks = map;
-                (Some(state), None)
+                new_state.tasks = map;
+                new_state.task_list_state.is_loading = false;
+                new_state.task_list_state.filtered_task_ids = list;
+                (Some(new_state), Some(Event::SelectedTask(0)))
+            }
+            Event::SelectedTask(idx) => {
+                let adjusted_idx = idx.clamp(0, state.task_list_state.filtered_task_ids.len() - 1);
+                if Some(adjusted_idx) == state.task_list_state.selected_row_index {
+                    return (None, None);
+                }
+                let mut new_state = state.clone();
+                new_state.task_list_state.selected_row_index = Some(adjusted_idx);
+                (Some(new_state), None)
             }
             Event::RequestError(err) => {
                 let mut state = state.clone();
@@ -165,26 +195,36 @@ impl<TaskRepo: TaskRepository> App<TaskRepo> {
                 state.task_list_state.error = Some(AppError::Repository(err));
                 (Some(state), None)
             }
-            Event::Key(key) => match (state.view, state.focus) {
-                (View::TaskList, Pane::TaskList) => handle_task_list_key(state, key),
-                _ => (None, None),
-            },
             Event::Quit => {
                 let mut state = state.clone();
                 state.is_running = false;
+                (Some(state), None)
+            }
+            Event::FocusedPane(pane) => {
+                let mut state = state.clone();
+                state.focus = pane;
                 (Some(state), None)
             }
         }
     }
 }
 
-fn handle_event() -> Result<Option<Event>> {
+fn handle_event(state: &State) -> Result<Option<Event>> {
     if crossterm::event::poll(Duration::from_millis(16))? {
-        if let crossterm::event::Event::Key(key) = crossterm::event::read()? {
-            if key.kind == crossterm::event::KeyEventKind::Press {
-                return Ok(Some(Event::Key(key)));
-            }
+        let terminal_event = crossterm::event::read()?;
+        let event = match state.focus {
+            Pane::Comments => CommentsPane::handle_terminal_event(state, &terminal_event),
+            Pane::Description => DescriptionPane::handle_terminal_event(state, &terminal_event),
+            Pane::SearchBar => SearchBar::handle_terminal_event(state, &terminal_event),
+            Pane::TaskList => TaskListPane::handle_terminal_event(state, &terminal_event),
+        };
+        if event.is_some() {
+            return Ok(event);
         }
+        let event = match state.view {
+            View::TaskList => TaskView::handle_terminal_event(state, terminal_event),
+        };
+        return Ok(event);
     }
     Ok(None)
 }
@@ -202,14 +242,14 @@ fn install_panic_hook() {
 fn init_terminal() -> Result<Terminal<impl Backend>> {
     crossterm::terminal::enable_raw_mode()?;
     let mut stdout = std::io::stdout();
-    ratatui::crossterm::execute!(stdout, EnterAlternateScreen)?;
+    crossterm::execute!(stdout, EnterAlternateScreen)?;
     let terminal = Terminal::new(CrosstermBackend::new(stdout))?;
     Ok(terminal)
 }
 
 fn restore_terminal() -> Result<()> {
     let mut stdout = std::io::stdout();
-    ratatui::crossterm::execute!(stdout, LeaveAlternateScreen)?;
+    crossterm::execute!(stdout, LeaveAlternateScreen)?;
     disable_raw_mode()?;
     Ok(())
 }
@@ -227,7 +267,7 @@ pub async fn run_tui(asana_client: AsanaClient) -> Result<()> {
 
     while state.is_running {
         terminal.draw(|frame| view(&state, frame))?;
-        let mut current_event = handle_event()?;
+        let mut current_event = handle_event(&state)?;
         if current_event.is_none() {
             current_event = rx.try_recv().ok();
         }

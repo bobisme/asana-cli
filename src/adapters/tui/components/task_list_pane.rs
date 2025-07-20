@@ -1,10 +1,14 @@
 use ratatui::{
+    crossterm::{
+        self,
+        event::{KeyCode, KeyEvent, KeyModifiers},
+    },
     prelude::*,
-    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, BorderType, Borders, Cell, Paragraph, Row, Table, TableState, Wrap},
 };
 
 use crate::{
-    adapters::tui::{components::Component, Pane},
+    adapters::tui::{components::Component, Event, Pane, State},
     domain::task::Task,
 };
 
@@ -30,15 +34,44 @@ fn task_icon_color(task: &Task) -> Color {
     }
 }
 
+fn handle_key_event(state: &State, key: &KeyEvent) -> Option<Event> {
+    match (
+        key.code,
+        key.modifiers,
+        state.task_list_state.selected_row_index,
+    ) {
+        (KeyCode::Down, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
+        (KeyCode::Down, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(x + 10)),
+        (KeyCode::Up, KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x - 1)),
+        (KeyCode::Up, KeyModifiers::SHIFT, Some(x)) => Some(Event::SelectedTask(x - 10)),
+        (KeyCode::Char('j'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x + 1)),
+        (KeyCode::Char('j'), KeyModifiers::CONTROL, Some(x)) => Some(Event::SelectedTask(x + 10)),
+        (KeyCode::Char('k'), KeyModifiers::NONE, Some(x)) => Some(Event::SelectedTask(x - 1)),
+        (KeyCode::Char('k'), KeyModifiers::CONTROL, Some(x)) => Some(Event::SelectedTask(x - 10)),
+        _ => None,
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TaskListPane;
 
 impl Component for TaskListPane {
     type State = crate::adapters::tui::State;
 
+    fn handle_terminal_event(
+        state: &Self::State,
+        event: &crossterm::event::Event,
+    ) -> Option<Event> {
+        match event {
+            crossterm::event::Event::Key(key) => handle_key_event(state, key),
+            _ => None,
+        }
+    }
+
     fn render(state: &Self::State, frame: &mut ratatui::Frame, area: ratatui::prelude::Rect) {
         let len = state.task_list_state.filtered_task_ids.len();
         let title = format!("Tasks ({len})");
-        let border_style = if state.focused_pane == Pane::TaskList {
+        let border_style = if state.focus == Pane::TaskList {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::Gray)
@@ -60,6 +93,7 @@ impl Component for TaskListPane {
 
         if let Some(error) = &state.task_list_state.error {
             let paragraph = Paragraph::new(error.to_string())
+                .wrap(Wrap { trim: true })
                 .block(block)
                 .style(Style::default().fg(Color::Red));
             frame.render_widget(paragraph, area);
@@ -83,7 +117,7 @@ impl Component for TaskListPane {
             .task_list_state
             .filtered_task_ids
             .iter()
-            .flat_map(|id| state.tasks.get(id).clone())
+            .flat_map(|id| state.tasks.get(id))
             .map(|task| {
                 let due_text = task.due_date_display();
 

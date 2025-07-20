@@ -1,5 +1,5 @@
 use color_eyre::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
 use std::time::Duration;
 
 #[derive(Debug, Clone)]

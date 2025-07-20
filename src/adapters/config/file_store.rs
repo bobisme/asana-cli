@@ -2,7 +2,6 @@ use crate::{
     domain::workspace::WorkspaceId,
     ports::{AppConfig, ConfigError, ConfigResult, ConfigStore},
 };
-use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tokio::fs;
