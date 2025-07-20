@@ -325,7 +325,7 @@ fn replace_markdown_images(markdown: &str) -> String {
             let mut alt_text = String::new();
             let mut found_closing = false;
 
-            while let Some(ch) = chars.next() {
+            for ch in chars.by_ref() {
                 if ch == ']' {
                     found_closing = true;
                     break;
@@ -338,7 +338,7 @@ fn replace_markdown_images(markdown: &str) -> String {
                 chars.next(); // consume '('
 
                 let mut depth = 1;
-                while let Some(ch) = chars.next() {
+                for ch in chars.by_ref() {
                     if ch == '(' {
                         depth += 1;
                     } else if ch == ')' {
@@ -473,7 +473,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
     let finish_line =
         |spans: &mut Vec<Span<'static>>, lines: &mut Vec<MarkdownLine>, is_code: bool| {
             if !spans.is_empty() {
-                let line_spans: Vec<Span<'static>> = spans.drain(..).collect();
+                let line_spans: Vec<Span<'static>> = std::mem::take(spans);
                 lines.push(MarkdownLine {
                     line: Line::from(line_spans),
                     is_code_block: is_code,
@@ -536,7 +536,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                                 )));
                                 list_info.next_number += 1;
                             } else {
-                                current_line_spans.push(Span::raw(format!("{}• ", indent)));
+                                current_line_spans.push(Span::raw(format!("{indent}• ")));
                             }
                         }
                     }
@@ -627,7 +627,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                             if current_line_spans.is_empty()
                                 || !current_line_spans
                                     .last()
-                                    .map_or(false, |s| s.content.contains("["))
+                                    .is_some_and(|s| s.content.contains("["))
                             {
                                 current_line_spans.push(Span::raw("[Image]"));
                             }
@@ -651,7 +651,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
                 }
             }
             Event::Text(text) => {
-                if link_destination.is_some() && matches!(emphasis_stack.last(), Some(_)) {
+                if link_destination.is_some() && emphasis_stack.last().is_some() {
                     // This might be image alt text - check if we're in an image context
                     // For now, we'll handle it as regular link text
                     let mut style = Style::default();
@@ -728,7 +728,7 @@ pub fn parse_markdown_to_marked_lines(markdown: &str, width: Option<u16>) -> Vec
             }
             Event::FootnoteReference(name) => {
                 current_line_spans.push(Span::styled(
-                    format!("[^{}]", name),
+                    format!("[^{name}]"),
                     Style::default().fg(Color::Blue),
                 ));
             }
@@ -761,10 +761,10 @@ where 1 = 1</pre>
 
         let result = html_to_markdown(html);
         println!("Final markdown:");
-        println!("{}", result);
+        println!("{result}");
         println!("\n--- Each line ---");
         for (i, line) in result.lines().enumerate() {
-            println!("{}: {:?}", i, line);
+            println!("{i}: {line:?}");
         }
 
         // Check that the SQL code is preserved
@@ -798,7 +798,7 @@ where 1 = 1</pre>
             println!("\nLine {}: {} spans", i, line.spans.len());
 
             // Check if this is a list item by looking for bullet point
-            if line.spans.len() > 0 {
+            if !line.spans.is_empty() {
                 let first_span_content = &line.spans[0].content;
 
                 // Count leading spaces to determine depth
@@ -806,10 +806,7 @@ where 1 = 1</pre>
                 let depth = leading_spaces / 2; // we use 2 spaces per level
 
                 if first_span_content.contains("• ") {
-                    println!(
-                        "  -> List item at depth {} (leading spaces: {})",
-                        depth, leading_spaces
-                    );
+                    println!("  -> List item at depth {depth} (leading spaces: {leading_spaces})",);
                     depths_seen.push(depth);
 
                     // Print the actual content
@@ -818,7 +815,7 @@ where 1 = 1</pre>
                         .iter()
                         .map(|span| span.content.to_string())
                         .collect();
-                    println!("  -> Full content: {:?}", content);
+                    println!("  -> Full content: {content:?}");
                 }
             }
 
@@ -828,7 +825,7 @@ where 1 = 1</pre>
         }
 
         // Verify we have list items at different depths
-        println!("\nDepths seen: {:?}", depths_seen);
+        println!("\nDepths seen: {depths_seen:?}");
         assert!(depths_seen.contains(&0), "Should have depth 0 items");
         assert!(depths_seen.contains(&1), "Should have depth 1 items");
         assert!(depths_seen.contains(&2), "Should have depth 2 items");
@@ -878,7 +875,7 @@ fn main() {
         }
 
         // Basic assertions
-        assert!(lines.len() > 0);
+        assert!(!lines.is_empty());
         // Should have headers, list items, code blocks, etc
         // With blank lines added, we'll have more lines
         assert!(lines.len() >= 20);
@@ -941,7 +938,7 @@ fn main() {
 </ol>"#;
 
         let markdown = html_to_markdown(html);
-        println!("Converted markdown:\n{}", markdown);
+        println!("Converted markdown:\n{markdown}");
 
         let lines = parse_markdown_to_lines(&markdown);
         for (i, line) in lines.iter().enumerate() {
@@ -950,17 +947,12 @@ fn main() {
                 .iter()
                 .map(|span| span.content.to_string())
                 .collect();
-            println!("Line {}: '{}'", i, text);
+            println!("Line {i}: '{text}'");
         }
 
         // Check that nested items are properly indented
         assert!(lines.len() >= 4);
         let line1_text: String = lines[1]
-            .spans
-            .iter()
-            .map(|s| s.content.to_string())
-            .collect();
-        let line2_text: String = lines[2]
             .spans
             .iter()
             .map(|s| s.content.to_string())
@@ -971,8 +963,7 @@ fn main() {
         // Nested items should have indentation (2 spaces)
         assert!(
             line1_text.starts_with("  "),
-            "Line 1 should start with 2 spaces, got: '{}'",
-            line1_text
+            "Line 1 should start with 2 spaces, got: '{line1_text}'",
         );
     }
 
@@ -1002,11 +993,11 @@ fn main() {
                 .iter()
                 .map(|span| span.content.to_string())
                 .collect();
-            println!("Line {}: '{}'", i, text);
+            println!("Line {i}: '{text}'");
 
             // Also print character count for indentation debugging
             let leading_spaces = text.len() - text.trim_start().len();
-            println!("  Leading spaces: {}", leading_spaces);
+            println!("  Leading spaces: {leading_spaces}");
         }
 
         // Get the text of each line
@@ -1030,22 +1021,18 @@ fn main() {
         assert_eq!(line0_text, "1. item 1");
         assert!(
             line1_text.starts_with("  "),
-            "Line 1 should have 2 spaces, got: '{}'",
-            line1_text
+            "Line 1 should have 2 spaces, got: '{line1_text}'",
         );
         assert!(
             line2_text.starts_with("    "),
-            "Line 2 should have 4 spaces, got: '{}'",
-            line2_text
+            "Line 2 should have 4 spaces, got: '{line2_text}'",
         );
 
         // Make sure we don't have excessive indentation
         let line2_spaces = line2_text.len() - line2_text.trim_start().len();
         assert!(
             line2_spaces == 4,
-            "Line 2 should have exactly 4 spaces, got {} spaces: '{}'",
-            line2_spaces,
-            line2_text
+            "Line 2 should have exactly 4 spaces, got {line2_spaces} spaces: '{line2_text}'",
         );
     }
 
@@ -1093,8 +1080,7 @@ fn main() {
             });
             assert!(
                 found,
-                "Should find '{}' with {} spaces indent",
-                expected_content, expected_indent
+                "Should find '{expected_content}' with {expected_indent} spaces indent",
             );
         }
     }
@@ -1121,15 +1107,15 @@ fn main() {
                 .iter()
                 .map(|span| span.content.as_ref())
                 .collect();
-            println!("Line {}: '{}'", i, text);
+            println!("Line {i}: '{text}'");
 
             // Check that lines don't exceed the width (with some tolerance for edge cases)
             let visual_width = text.width();
-            println!("  Width: {} chars", visual_width);
+            println!("  Width: {visual_width} chars");
 
             // Most lines should be <= 40 chars (allowing some tolerance for edge cases)
             if visual_width > 45 {
-                println!("  WARNING: Line {} exceeds expected width significantly", i);
+                println!("  WARNING: Line {i} exceeds expected width significantly");
             }
         }
 
@@ -1145,7 +1131,7 @@ fn main() {
             let text: String = line.line.spans.iter().map(|s| s.content.as_ref()).collect();
             if text.starts_with("  ") && !text.starts_with("  •") && !text.trim().is_empty() {
                 found_continuation = true;
-                println!("Found continuation line: '{}'", text);
+                println!("Found continuation line: '{text}'");
                 break;
             }
         }
@@ -1171,7 +1157,7 @@ More content after the rule."#;
         println!("\n=== New Features Test ===");
         for (i, line) in lines.iter().enumerate() {
             let text: String = line.line.spans.iter().map(|s| s.content.as_ref()).collect();
-            println!("Line {}: '{}'", i, text);
+            println!("Line {i}: '{text}'");
         }
 
         let all_text: Vec<String> = lines
@@ -1241,7 +1227,7 @@ More content after the rule."#;
 
         println!("Found {} indented lines:", indented_lines.len());
         for (i, text) in &indented_lines {
-            println!("  Line {}: '{}'", i, text);
+            println!("  Line {i}: '{text}'");
         }
 
         // We should have multiple indented lines

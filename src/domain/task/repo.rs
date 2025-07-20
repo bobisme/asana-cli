@@ -10,6 +10,9 @@ pub trait TaskRepository: Send + Sync + 'static {
         filter: &TaskFilter,
     ) -> impl Future<Output = RepositoryResult<Vec<Task>>> + Send;
     async fn update_task(&self, id: &TaskId, updates: &TaskUpdate) -> RepositoryResult<Task>;
-    async fn get_task_comments(&self, task_id: &TaskId) -> RepositoryResult<Vec<Comment>>;
+    fn get_task_comments(
+        &self, 
+        task_id: &TaskId
+    ) -> impl Future<Output = RepositoryResult<Vec<Comment>>> + Send;
     async fn create_comment(&self, task_id: &TaskId, content: &str) -> RepositoryResult<Comment>;
 }

@@ -109,21 +109,28 @@ impl TaskRepository for AsanaTaskRepository {
         Ok(task_dto.into())
     }
 
-    async fn get_task_comments(&self, task_id: &TaskId) -> RepositoryResult<Vec<Comment>> {
+    fn get_task_comments(
+        &self,
+        task_id: &TaskId,
+    ) -> impl std::future::Future<Output = RepositoryResult<Vec<Comment>>> + Send {
         let path = format!(
             "/tasks/{}/stories?opt_fields=gid,text,created_by.gid,created_by.name,created_by.email,created_at,type,resource_subtype",
             task_id.0
         );
+        let task_id = task_id.clone();
+        let client = self.client.clone();
 
-        let comment_dtos: Vec<CommentDto> = self.client.get_list(&path).await?;
-        Ok(comment_dtos
-            .into_iter()
-            .map(|dto| {
-                let mut comment: Comment = dto.into();
-                comment.task_id = task_id.clone();
-                comment
-            })
-            .collect())
+        async move {
+            let comment_dtos: Vec<CommentDto> = client.get_list(&path).await?;
+            Ok(comment_dtos
+                .into_iter()
+                .map(|dto| {
+                    let mut comment: Comment = dto.into();
+                    comment.task_id = task_id.clone();
+                    comment
+                })
+                .collect())
+        }
     }
 
     async fn create_comment(&self, task_id: &TaskId, content: &str) -> RepositoryResult<Comment> {

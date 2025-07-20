@@ -1,4 +1,8 @@
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 use color_eyre::Result;
 use ratatui::{
@@ -52,6 +56,9 @@ pub enum Event {
     ReceivedTasks(Vec<Task>),
     RequestError(RepositoryError),
     SelectedTask(Option<usize>),
+    RequestComments(TaskId),
+    ReceivedComments(TaskId, Vec<Comment>),
+    CommentLoadError(TaskId, RepositoryError),
     FullScreenOff,
     FullScreenOn,
     Searched {
@@ -82,7 +89,9 @@ pub struct State {
     pub view: View,
     pub focus: Pane,
     pub tasks: HashMap<TaskId, Task>,
-    pub comments: HashMap<String, Comment>,
+    pub comments: HashMap<TaskId, Vec<Comment>>,
+    pub loading_comments: HashSet<TaskId>,
+    pub comment_errors: HashMap<TaskId, AppError>,
     pub last_error: Option<AppError>,
     pub fullscreen_pane: bool,
     pub task_list_state: TaskListState,
@@ -97,6 +106,8 @@ impl Default for State {
             focus: Pane::TaskList,
             tasks: Default::default(),
             comments: Default::default(),
+            loading_comments: Default::default(),
+            comment_errors: Default::default(),
             last_error: None,
             task_list_state: TaskListState {
                 is_loading: true,
@@ -117,6 +128,22 @@ impl State {
     pub fn selected_task(&self) -> Option<&Task> {
         let task_id = self.selected_task_id()?;
         self.tasks.get(task_id)
+    }
+
+    pub fn selected_task_comments(&self) -> Option<&Vec<Comment>> {
+        let task_id = self.selected_task_id()?;
+        self.comments.get(task_id)
+    }
+
+    pub fn is_loading_comments(&self) -> bool {
+        self.selected_task_id()
+            .map(|task_id| self.loading_comments.contains(task_id))
+            .unwrap_or(false)
+    }
+
+    pub fn comment_load_error(&self) -> Option<&AppError> {
+        let task_id = self.selected_task_id()?;
+        self.comment_errors.get(task_id)
     }
 }
 
@@ -164,6 +191,24 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
         });
     }
 
+    fn load_comments(&self, task_id: TaskId, tx: &mpsc::UnboundedSender<Event>) {
+        let task_repo = self.task_repository();
+        let tx = tx.clone();
+        let task_id_clone = task_id.clone();
+        tokio::spawn(async move {
+            let closure = async move || -> std::result::Result<Event, RepositoryError> {
+                let comments = task_repo.get_task_comments(&task_id).await?;
+                info!("got {} comments for task {}", comments.len(), task_id);
+                Ok(Event::ReceivedComments(task_id, comments))
+            };
+            let event = match closure().await {
+                Ok(event) => event,
+                Err(e) => Event::CommentLoadError(task_id_clone, e),
+            };
+            let _ = tx.send(event);
+        });
+    }
+
     async fn update(
         &self,
         state: &State,
@@ -189,21 +234,49 @@ impl<T: TaskRepository + WorkspaceRepository> App<T> {
                 (Some(new_state), Some(Event::SelectedTask(Some(0))))
             }
             Event::SelectedTask(idx) => {
-                let idx = idx.map(|x| {
-                    x.clamp(
-                        0,
-                        state
-                            .task_list_state
-                            .filtered_task_ids
-                            .len()
-                            .saturating_sub(1),
-                    )
-                });
+                let len = state.task_list_state.filtered_task_ids.len();
+                let idx = idx.map(|x| x.clamp(0, len.saturating_sub(1)));
                 if idx == state.task_list_state.selected_row_index {
                     return (None, None);
                 }
                 let mut state = state.clone();
                 state.task_list_state.selected_row_index = idx;
+
+                // Trigger comment loading for the selected task if not already loaded or loading
+                let next_event = if let Some(task_id) = state.selected_task_id() {
+                    if !state.comments.contains_key(task_id)
+                        && !state.loading_comments.contains(task_id)
+                        && !state.comment_errors.contains_key(task_id)
+                    {
+                        Some(Event::RequestComments(task_id.clone()))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                (Some(state), next_event)
+            }
+            Event::RequestComments(task_id) => {
+                let mut state = state.clone();
+                state.loading_comments.insert(task_id.clone());
+                state.comment_errors.remove(&task_id);
+                self.load_comments(task_id, tx);
+                (Some(state), None)
+            }
+            Event::ReceivedComments(task_id, comments) => {
+                let mut state = state.clone();
+                state.loading_comments.remove(&task_id);
+                state.comments.insert(task_id, comments);
+                (Some(state), None)
+            }
+            Event::CommentLoadError(task_id, err) => {
+                let mut state = state.clone();
+                state.loading_comments.remove(&task_id);
+                state
+                    .comment_errors
+                    .insert(task_id, AppError::Repository(err));
                 (Some(state), None)
             }
             Event::RequestError(err) => {

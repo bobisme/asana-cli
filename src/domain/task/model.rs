@@ -1,6 +1,7 @@
+use std::fmt;
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use std::fmt;
 
 use crate::domain::{project::ProjectId, user::UserId, workspace::WorkspaceId};
 
@@ -176,7 +177,7 @@ impl Default for TaskFilter {
             assignee: None,
             completed: Some(false), // Default to incomplete tasks
             search_query: None,
-            limit: Some(50),
+            limit: Some(100),
             offset: None,
         }
     }
